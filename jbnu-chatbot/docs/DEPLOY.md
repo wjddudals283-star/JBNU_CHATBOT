@@ -89,7 +89,10 @@ Render 공식 문서 확인 결과:
 | `GET /health` | **공개** | `{"ok": true}` 뿐. Render 헬스체크용 |
 | `GET /admin/status` | 인증 | 크롤 건수 · 스케줄러 상태 |
 | `GET /admin/freshness` | 인증 | 소스별 마지막 성공 · stale 여부 |
-| `POST /skill/{block}` | 인증 | 카카오 스킬 |
+| **`POST /skill`** | 인증 | **카카오 스킬 — 이것 하나만 등록한다** |
+| `POST /skill/{block}` | 인증 | 구 경로. 이미 등록한 것이 있으면 계속 동작 |
+| `POST /admin/ingest` | 인증 | 노트북 백필 밀어넣기 |
+| `GET /admin/blocks` | 인증 | 블록 매핑 · 매핑 안 된 블록 |
 
 인증은 `X-Skill-Token` 헤더다. `render.yaml` 이 `generateValue: true` 로
 256비트 랜덤 값을 자동 생성하므로 **저장소에 값이 남지 않는다.**
@@ -187,11 +190,40 @@ safety.load().verification_worksheet()   # 등급까지 나온다
 
 ## 6. 카카오 채널 연결 (배포 후)
 
-스킬 URL 은 이렇게 된다.
+### ★ 스킬은 **하나만** 등록한다
 
 ```
-https://<서비스>.onrender.com/skill/food.menu.today
+https://<서비스>.onrender.com/skill
 ```
+
+헤더에 `X-Skill-Token` 을 넣는다. **블록을 추가할 때 스킬을 새로 만들 필요가 없다** —
+블록의 봇 응답에서 이 스킬을 드롭다운으로 고르기만 하면 된다.
+토큰도 한 번만 넣는다.
+
+분기는 서버가 `userRequest.block` 으로 한다(`config/blocks.yaml`).
+
+### 새 블록을 만들었는데 폴백이 나오면
+
+블록 이름이 매핑에 없는 것이다. **추측해서 아무 핸들러로 보내지 않기 때문이다** —
+비슷한 이름이라고 대충 맞히면 새 블록이 조용히 엉뚱한 답을 한다.
+
+```bash
+curl -H "X-Skill-Token: ..." https://<서비스>.onrender.com/admin/blocks
+```
+
+`unmapped` 에 들어온 이름이 그대로 나온다. `config/blocks.yaml` 의 `handlers` 에
+한 줄 추가하고 커밋하면 된다. 코드 변경은 필요 없다.
+
+```yaml
+handlers:
+  food.menu.today:
+    - 오늘 학식
+    - 학식            # ← 여기에 추가
+```
+
+> **이름 대신 `block.id` 를 쓰는 게 더 안전하다.** 총학이 블록 이름을 바꾸면
+> 이름 매핑은 끊기지만 id 는 안 바뀐다. 봇테스트 payload 에서
+> `userRequest.block.id` 를 확인해 `blocks.yaml` 의 `ids` 에 넣으면 된다.
 
 `03_카카오_개설_실행가이드.md` STEP 5 를 따른다. 스킬서버는 공개 HTTPS 여야 하는데
 Render 가 기본 제공한다.

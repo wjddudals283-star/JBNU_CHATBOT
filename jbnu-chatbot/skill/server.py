@@ -27,7 +27,8 @@ from typing import Any
 
 from fastapi import Depends, FastAPI, Request
 
-from skill import aliases, auth, branch, ingest_api, kakao, safety, templates
+from skill import (aliases, auth, branch, ingest_api, kakao, routing, safety,
+                   templates)
 from store import repo
 
 log = logging.getLogger("jbnu.skill")
@@ -210,10 +211,33 @@ def create_app(db_path: pathlib.Path | None = None, *,
         return {"sources": out,
                 "any_stale": any(x["stale"] for x in out) if out else True}
 
+    # ★ 단일 진입점. 오픈빌더에 스킬을 **하나만** 등록하면 되고,
+    #   블록을 추가할 때 스킬 재등록·토큰 재입력이 필요 없다.
+    @app.post("/skill", dependencies=[Depends(auth.require_token)])
+    async def skill_single(request: Request) -> dict:
+        payload = await request.json()
+        return handle(app.state.db_path, None, payload)
+
+    # 기존 경로 유지 — 이미 등록한 스킬이 계속 동작한다 (마이그레이션 불필요)
     @app.post("/skill/{block_name}", dependencies=[Depends(auth.require_token)])
     async def skill(block_name: str, request: Request) -> dict:
         payload = await request.json()
         return handle(app.state.db_path, block_name, payload)
+
+    @app.get("/admin/blocks", dependencies=[Depends(auth.require_token)])
+    def blocks() -> dict:
+        """등록된 블록 매핑 + **매핑 안 된 블록**.
+
+        새 블록을 만든 뒤 답이 폴백으로 나오면 여기를 보면 된다.
+        어떤 이름으로 들어왔는지 그대로 나온다.
+        """
+        doc = routing.load()
+        return {
+            "handlers": doc.get("handlers") or {},
+            "ids": doc.get("ids") or {},
+            "unmapped": routing.unmapped_blocks(),
+            "hint": "config/blocks.yaml 의 handlers 에 이름을 추가하고 배포하면 된다",
+        }
 
     return app
 
@@ -222,21 +246,27 @@ def create_app(db_path: pathlib.Path | None = None, *,
 # 처리 본체 (FastAPI 없이도 테스트할 수 있게 분리)
 # ═══════════════════════════════════════════════════════════════
 
-def handle(db_path: pathlib.Path, block_name: str, payload: dict,
+def handle(db_path: pathlib.Path, block_name: str | None, payload: dict,
            *, now: dt.datetime | None = None) -> dict:
     utterance = (payload.get("userRequest") or {}).get("utterance", "")
 
     # ── 1. 안전 분기. 인텐트 분류보다 먼저. 절대 뒤로 옮기지 말 것 ──
+    #    라우팅보다도 먼저다. 어떤 블록으로 들어왔든 민감 발화면 여기서 끝난다.
     if safety.is_sensitive(utterance):
         return safety.response(utterance)
 
-    # ── 2. 오픈빌더가 추출한 파라미터 ──
+    # ── 2. 블록 라우팅 ──
+    handler, via = routing.resolve(payload, path_block=block_name)
+    log.info("[skill] block=%r via=%s utterance=%r",
+             handler or "-", via, utterance[:40])
+
+    # ── 3. 오픈빌더가 추출한 파라미터 ──
     params = (payload.get("action") or {}).get("params") or {}
     detail = (payload.get("action") or {}).get("detailParams") or {}
 
-    if block_name in ("food.menu.today", "food.menu"):
+    if handler == "food.menu.today":
         return _handle_meal(db_path, params, detail, utterance, now=now)
-    if block_name in ("deadline.upcoming", "calendar.upcoming", "calendar.date"):
+    if handler == "deadline.upcoming":
         return _handle_upcoming(db_path, params, detail, utterance, now=now)
     return templates.render_fallback()
 
