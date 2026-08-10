@@ -36,27 +36,52 @@
 
 ---
 
+## 흐름 — 노트북은 네트워크 위치만 빌려준다
+
+```
+노트북(한국 IP) → 생협 API 200 → 원문 바이트
+        ↓ POST /admin/ingest  (X-Skill-Token)
+서버 → **다시 파싱** → 검증 게이트 → 정렬 앵커 → 교차검증 → DB
+        ↓
+학생 답변에 즉시 반영
+```
+
+★ **파싱된 레코드가 아니라 원문 바이트를 보낸다.**
+서버가 파서·게이트를 처음부터 다시 통과시킨다. 밖에서 들어온 데이터를
+그대로 믿지 않는다. 노트북에서 이미 검증했더라도 서버가 한 번 더 본다.
+
+★ **출처 메타는 노트북 것을 유지한다.** `observed_at` 은 노트북이 받아온 시각이다.
+서버가 받은 시각으로 바꾸면 신선도가 실제보다 좋아 보인다.
+
+★ 해시는 서버가 다시 계산한다. 클라이언트가 준 값을 받지도 않는다.
+
+---
+
 ## 등록 절차 (Windows 작업 스케줄러)
 
-### 1. 실행할 명령
+### 1. 토큰 준비
 
-저장소가 있는 폴더에서 이 한 줄이다.
+Render Dashboard → 서비스 → **Environment** → `SKILL_TOKEN` 옆 눈 아이콘 → 값 복사.
 
-```bat
-python -m crawler.run --source coop_week_menu
-```
+> 이 값을 채팅·메신저에 붙여넣지 않는다. 붙는 순간 시크릿이 아니게 된다.
 
 ### 2. 배치 파일 만들기
 
-`jbnu-chatbot` 폴더에 `backfill.bat` 을 만든다. 경로는 본인 것으로 바꾼다.
+`jbnu-chatbot` 폴더에 `backfill.bat` 을 만든다. 경로와 토큰은 본인 것으로.
 
 ```bat
 @echo off
 cd /d "C:\Users\정영민\Desktop\전북대총학_카톡챗봇\jbnu-chatbot"
-python -m crawler.run --source coop_week_menu >> data\backfill.log 2>&1
+set SKILL_TOKEN=여기에_토큰
+set JBNU_SERVER=https://jbnu-chatbot.onrender.com
+python -m crawler.push --source coop_week_menu >> data\backfill.log 2>&1
 ```
 
 > `>>` 로 로그를 남긴다. 조용히 실패하면 몇 주 뒤에나 알게 된다.
+>
+> ⚠️ 이 `.bat` 에는 토큰이 들어간다. **저장소에 커밋하지 않는다**
+> (`.gitignore` 가 `*.bat` 을 막지는 않으므로 직접 확인할 것).
+> 파일을 개인 폴더에 두고 공유하지 않는다.
 
 ### 3. 작업 스케줄러 등록
 
@@ -83,12 +108,20 @@ Get-Content jbnu-chatbot\data\backfill.log -Tail 20
 이렇게 나오면 정상이다.
 
 ```
-[coop_week_menu] 생협 주간식단 (1차 원천)
-  fetch 200  16,515B  hash=...
-  outcome=success  파싱 95건 / 격리 0건  파서호출=True
+서버: https://jbnu-chatbot.onrender.com
+  [coop_week_menu] fetch 200  16,515B
+    → 서버 success  식단 95건 / 격리 0건  OK
+
+1/1 성공
 ```
 
-`fetch 403` 이면 노트북도 차단된 것이다 — 그때는 대학 캠퍼스 망에서 시도해 본다.
+| 증상 | 뜻 |
+|---|---|
+| `fetch 403` | **노트북도 차단됐다.** 캠퍼스 망에서 다시 시도 |
+| `서버가 거부했다 401` | 토큰이 틀렸다. Render 에서 다시 복사 |
+| `서버가 거부했다 400 ... 미래` | 노트북 시계가 틀어졌다 |
+| `서버 parse_error` | 원천 구조가 바뀌었다. 파서 수정 필요 |
+| `서버 unchanged` | 이미 같은 내용이 들어가 있다. 정상 |
 
 ---
 
@@ -97,27 +130,45 @@ Get-Content jbnu-chatbot\data\backfill.log -Tail 20
 특정 주를 놓쳤으면 날짜를 지정한다.
 
 ```bash
-python -m crawler.run --source coop_week_menu --date 2026-09-07
+python -m crawler.push --source coop_week_menu --date 2026-09-07
 ```
 
-여러 주를 한 번에 채우려면 날짜를 바꿔가며 반복하면 된다.
+지난 몇 주를 한 번에 채우려면:
+
+```bash
+python -m crawler.push --source coop_week_menu --weeks-back 4
+```
+
 같은 주를 두 번 넣어도 `UNIQUE` 가 막으므로 중복이 안 쌓인다.
 
 ---
 
-## ⚠️ 이 백필은 배포 서버 DB 에 안 들어간다
+## 서버가 다시 검증한다 — 확인된 동작
 
-노트북 백필은 **노트북의 로컬 DB**(`jbnu-chatbot/data/jbnu.db`)에 쌓인다.
-Render 의 디스크와 별개다.
+노트북이 뭘 보내든 서버가 게이트를 다시 통과시킨다. 테스트로 고정돼 있다.
 
-지금 이걸로 얻는 것:
-- 과거 데이터 축적 (교차검증·분석용)
-- 차단이 풀렸는지 주기적 확인
+| 보낸 것 | 서버 결과 |
+|---|---|
+| 정상 JSON | `success` · DB 반영 |
+| `status: fail` 응답 | `parse_error` · **기존 데이터 무변경** |
+| 구분자 놓친 항목 | 그 항목만 `quarantine` |
+| 403 본문 | `fetch_error` · 사유 기록 |
+| 미래 시각 | `400` 거부 |
+| 5MB 초과 | `413` 거부 |
 
-배포 서버에 반영하려면 3단계에서 Postgres 로 옮긴 뒤 양쪽이 같은 DB 를 보게 해야 한다.
-그전까지는 **학생 답변은 학교 XHR 로 나가고**, 백필은 데이터 자산을 지키는 용도다.
+---
 
-이 한계를 모르고 "백필했으니 챗봇도 최신"이라고 생각하면 안 된다.
+## 로컬 DB 는 어떻게 되나
+
+`python -m crawler.push` 는 **서버로만** 보낸다. 노트북 로컬 DB 에는 안 쌓인다.
+로컬에도 남기고 싶으면 따로 돌린다.
+
+```bash
+python -m crawler.run --source coop_week_menu    # 로컬 DB
+python -m crawler.push --source coop_week_menu   # 서버 DB
+```
+
+평소에는 `push` 만 하면 된다. 학생 답변에 반영되는 건 서버 DB 다.
 
 ---
 

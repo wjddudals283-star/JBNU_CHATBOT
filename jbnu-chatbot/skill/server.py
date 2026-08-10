@@ -27,7 +27,7 @@ from typing import Any
 
 from fastapi import Depends, FastAPI, Request
 
-from skill import aliases, auth, branch, kakao, safety, templates
+from skill import aliases, auth, branch, ingest_api, kakao, safety, templates
 from store import repo
 
 log = logging.getLogger("jbnu.skill")
@@ -162,6 +162,15 @@ def create_app(db_path: pathlib.Path | None = None, *,
             }
         except Exception as e:  # noqa: BLE001
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+    @app.post("/admin/ingest", dependencies=[Depends(auth.require_token)])
+    def push_ingest(payload: ingest_api.IngestPayload) -> dict:
+        """노트북(한국 IP)이 받아온 원문을 서버 DB 로 밀어넣는다.
+
+        ★ 파싱된 레코드가 아니라 **원문 바이트**를 받아 서버가 다시 파싱한다.
+          밖에서 들어온 데이터를 그대로 믿지 않는다 — 게이트를 처음부터 다시 통과시킨다.
+        """
+        return ingest_api.handle_ingest(app.state.db_path, payload)
 
     @app.get("/admin/smoke", dependencies=[Depends(auth.require_token)])
     def smoke(date: str | None = None) -> dict:

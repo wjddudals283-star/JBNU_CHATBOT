@@ -19,6 +19,11 @@ secrets.*
 config/local_*.yaml
 config/*.local.yaml
 # 카카오 스킬 인증 토큰(X-Skill-Token) 등은 반드시 환경변수로만 둔다
+# ★ 백필 배치 파일에는 SKILL_TOKEN 이 들어간다 (docs/BACKFILL.md)
+*.bat
+*.cmd
+*.ps1
+!scripts/*.example.bat
 
 # ── DB ─────────────────────────────────────────────────────────
 *.db
