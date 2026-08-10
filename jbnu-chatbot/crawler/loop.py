@@ -39,9 +39,13 @@ log = logging.getLogger("jbnu.scheduler")
 
 class SchedulerLoop:
     def __init__(self, *, interval_sec: int = DEFAULT_INTERVAL_SEC,
-                 window_min: int = 30):
+                 window_min: int = 30, smoke: bool = False):
         self.interval = interval_sec
         self.window = window_min
+        # ★ 기본값 False — 실네트워크를 타는 동작은 명시적으로 켜야 한다.
+        #   테스트가 무심코 외부 사이트를 두드리면 느려지고, 원천 사정으로
+        #   우리 코드와 무관하게 빨간불이 된다. 프로덕션에서는 서버가 True 로 켠다.
+        self.smoke_enabled = smoke
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self.started_at: str | None = None
@@ -50,6 +54,9 @@ class SchedulerLoop:
         self.last_error: str | None = None
         self.ticks = 0
         self.runs = 0
+        # 실사이트 스모크는 하루 한 번. 위치 의존 결함을 자동으로 잡는다.
+        self.last_smoke: dict | None = None
+        self._smoke_date: str | None = None
 
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
@@ -96,9 +103,36 @@ class SchedulerLoop:
                 log.error("[scheduler] FAIL source=%s %s", key, line)
                 self.last_error = f"{key}: {line}"
 
+        self.maybe_smoke(now)
         self.last_tick = now.isoformat()
         self.last_targets = targets
         return targets
+
+    def maybe_smoke(self, now: dt.datetime) -> dict | None:
+        """하루 한 번 실사이트 스모크.
+
+        ★ 배포 서버의 네트워크 위치에서 돌아야 의미가 있다.
+          '한국에서는 200, 해외에서는 403' 같은 위치 의존 결함은
+          로컬 스모크가 원리적으로 못 잡는다.
+        """
+        if not self.smoke_enabled:
+            return None
+        today = now.date().isoformat()
+        if self._smoke_date == today:
+            return None
+        try:
+            from crawler import smoke as smoke_mod
+            self.last_smoke = smoke_mod.run()
+            self._smoke_date = today
+            v = self.last_smoke["verdict"]
+            if not self.last_smoke["coop_passing_variants"]:
+                log.error("[scheduler] SMOKE PROBLEM %s", v)
+            else:
+                log.info("[scheduler] SMOKE ok %s", v)
+        except Exception:  # noqa: BLE001
+            line = traceback.format_exc().strip().splitlines()[-1]
+            log.error("[scheduler] SMOKE ERROR %s", line)
+        return self.last_smoke
 
     def _run(self) -> None:
         while not self._stop.is_set():
@@ -121,6 +155,11 @@ class SchedulerLoop:
             "last_error": self.last_error,
             "interval_sec": self.interval,
             "alive": bool(self._thread and self._thread.is_alive()),
+            "smoke": None if self.last_smoke is None else {
+                "at": self.last_smoke.get("at"),
+                "verdict": self.last_smoke.get("verdict"),
+                "coop_passing_variants": self.last_smoke.get("coop_passing_variants"),
+            },
         }
 
 

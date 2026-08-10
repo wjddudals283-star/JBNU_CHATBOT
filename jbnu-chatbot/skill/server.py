@@ -106,7 +106,9 @@ def create_app(db_path: pathlib.Path | None = None, *,
         from contextlib import asynccontextmanager
 
         from crawler import loop as loop_mod
-        app.state.scheduler = loop_mod.SchedulerLoop()
+        # 프로덕션에서는 일 1회 실사이트 스모크를 켠다.
+        # 위치 의존 결함(한국 200 / 해외 403)은 배포 서버에서만 드러난다.
+        app.state.scheduler = loop_mod.SchedulerLoop(smoke=True)
 
         @asynccontextmanager
         async def lifespan(_app: FastAPI):
@@ -141,6 +143,16 @@ def create_app(db_path: pathlib.Path | None = None, *,
             }
         except Exception as e:  # noqa: BLE001
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+    @app.get("/admin/smoke", dependencies=[Depends(auth.require_token)])
+    def smoke(date: str | None = None) -> dict:
+        """실사이트 스모크를 **이 서버의 네트워크 위치에서** 돌린다.
+
+        로컬 스모크는 네트워크 위치를 고정한 반쪽 검증이라
+        '한국에서는 200, 해외에서는 403' 같은 위치 의존 결함을 못 잡는다.
+        """
+        from crawler import smoke as smoke_mod
+        return smoke_mod.run(date)
 
     # ★ 크롤 상태·소스 목록이 그대로 나가므로 반드시 인증 뒤에 둔다.
     @app.get("/admin/freshness", dependencies=[Depends(auth.require_token)])

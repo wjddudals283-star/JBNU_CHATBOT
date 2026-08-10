@@ -31,6 +31,8 @@ class IngestReport:
     prices: int = 0
     parser_called: bool = False
     error: str | None = None
+    # 차단 사유가 본문에 적혀 있는 경우가 많다. 진단의 출발점이라 버리지 않는다.
+    response_body: str | None = None
     reasons: list[str] = field(default_factory=list)
 
 
@@ -60,6 +62,19 @@ def ingest(conn: sqlite3.Connection, result: fetch_mod.FetchResult, *,
         repo.finish_crawl(conn, rid, outcome="unchanged", finished_at=result.fetched_at)
         conn.commit()
         return IngestReport(run_id=rid, outcome="unchanged", parser_called=False)
+
+    # ★ 파서에 넘기기 전에 HTTP 상태를 본다.
+    #   403/500 본문을 그대로 파서에 주면 JSONDecodeError 같은 엉뚱한 예외가 나고,
+    #   **차단 사유가 어디에도 안 남는다.** 원인 진단이 불가능해진다.
+    if not (200 <= result.http_status < 300):
+        body = result.text[:600].strip()
+        repo.finish_crawl(
+            conn, rid, outcome="fetch_error", finished_at=result.fetched_at,
+            error_message=f"HTTP {result.http_status} · {len(result.content)}B · {body}",
+        )
+        conn.commit()
+        return IngestReport(run_id=rid, outcome="fetch_error", parser_called=False,
+                            error=f"HTTP {result.http_status}", response_body=body)
 
     sid = fetch_mod.snapshot_id(result)
     path = fetch_mod.save_snapshot_file(result, snapshot_dir)

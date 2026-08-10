@@ -80,6 +80,8 @@ def test_할_일이_없어도_틱_로그를_남긴다(isolated_db, monkeypatch, 
 
 
 def test_로그_접두사가_ASCII다(isolated_db, monkeypatch, caplog):
+    """검색 가능해야 한다. 판정 문구는 사람용이라 한국어여도 되지만,
+    **접두사와 키워드**는 ASCII 여야 'sched' 로 찾을 수 있다."""
     monkeypatch.setattr(run_mod, "main", lambda argv: 0)
     lp = loop_mod.SchedulerLoop()
     with caplog.at_level("INFO", logger="jbnu.scheduler"):
@@ -87,7 +89,36 @@ def test_로그_접두사가_ASCII다(isolated_db, monkeypatch, caplog):
     lines = [r.getMessage() for r in caplog.records]
     assert lines and all(l.startswith("[scheduler] ") for l in lines)
     for l in lines:
-        l.encode("ascii", errors="strict")   # 한글이 섞이면 여기서 터진다
+        # 접두사 다음 첫 토큰(TICK/RUN/DONE/FAIL…)까지는 ASCII
+        head = l[len("[scheduler] "):].split(" ")[0]
+        head.encode("ascii", errors="strict")
+
+
+def test_스모크는_기본적으로_꺼져_있다(isolated_db, monkeypatch):
+    """★ 실네트워크를 타는 동작은 명시적으로 켜야 한다.
+
+    테스트가 무심코 외부 사이트를 두드리면 느려지고,
+    원천 사정으로 우리 코드와 무관하게 빨간불이 된다.
+    """
+    monkeypatch.setattr(run_mod, "main", lambda argv: 0)
+    called = []
+    from crawler import smoke as smoke_mod
+    monkeypatch.setattr(smoke_mod, "run", lambda *a, **k: called.append(1))
+
+    loop_mod.SchedulerLoop().tick(dt.datetime(2026, 8, 10, 9, 0, tzinfo=KST))
+    assert called == []
+
+    loop_mod.SchedulerLoop(smoke=True).tick(dt.datetime(2026, 8, 10, 9, 0, tzinfo=KST))
+    assert len(called) == 1
+
+
+def test_프로덕션_서버는_스모크를_켠다(tmp_path, monkeypatch):
+    """기본값이 False 라서, 서버가 명시적으로 켜는지 확인해야 한다."""
+    c = repo.connect(tmp_path / "p.db")
+    repo.init_db(c)
+    c.close()
+    app = server.create_app(tmp_path / "p.db", with_scheduler=True)
+    assert app.state.scheduler.smoke_enabled is True
 
 
 def test_status가_상태를_구조화해_돌려준다(isolated_db, monkeypatch):
