@@ -347,6 +347,77 @@ def render_upcoming(rows, *, today: str, days: int, source_url: str,
     ])
 
 
+def render_calendar_item(result, *, today: str, source_url: str,
+                         observed_at: str | None = None,
+                         stale: bool = False) -> dict:
+    """특정 학사일정 조회 — "수강신청 언제야".
+
+    ★ 답변에 **질문 대상**을 반드시 넣는다.
+      답에 질문 대상이 없으면 학생이 "내 질문에 답한 게 맞나"를 판단할 수 없고,
+      판단할 수 없는 답은 틀린 답과 구별이 안 된다.
+    """
+    from skill.calendar_search import Outcome
+    label = result.topic.label if result.topic else "학사일정"
+
+    if stale:
+        return kakao.response(
+            [kakao.simple_text(
+                f"{label} 일정을 확인하지 못했어요.\n"
+                f"마지막 확인이 오래돼서 지금 자료로 쓰기 어려워요.\n\n"
+                f"원문에서 직접 확인해 주세요.\n{source_url}")],
+            [kakao.quick_reply("학사일정 전체", "학사일정"),
+             kakao.quick_reply("처음으로")])
+
+    if result.outcome is Outcome.NO_DATA:
+        # ★ 조회할 자료가 없다. '그 항목이 없다'와 다른 말이다.
+        return kakao.response(
+            [kakao.simple_text(
+                f"{label} 일정을 확인하지 못했어요.\n"
+                f"학사일정 자료를 아직 가져오지 못했어요.\n\n"
+                f"원문에서 직접 확인해 주세요.\n{source_url}")],
+            [kakao.quick_reply("처음으로")])
+
+    if result.outcome is Outcome.NOT_FOUND:
+        # ★ 조회는 했다. 그 사실을 밝힌다 — 안 찾아보고 없다고 한 것과 다르다.
+        lines = [f"{label} 일정을 학사일정에서 찾지 못했어요.",
+                 f"학사일정 {result.searched_total}건을 확인했어요.", "",
+                 "원문에서 직접 확인해 주세요.", source_url]
+        if result.topic and result.topic.see_also:
+            lines.insert(2, f"{result.topic.see_also}에 따로 올라올 수 있어요.")
+        return kakao.response(
+            [kakao.simple_text("\n".join(lines))],
+            [kakao.quick_reply("학사일정 전체", "학사일정"),
+             kakao.quick_reply("처음으로")])
+
+    d0 = dt.date.fromisoformat(today)
+    ranked = result.entries
+    head = ranked[0]
+    lines = [f"{label} — {_period_text(head)}이에요.",
+             f"· {head['title']}"]
+    if len(ranked) > 1:
+        lines.append("")
+        lines.append("관련 일정도 있어요.")
+        for e in ranked[1:4]:
+            lines.append(f"· {e['title']} — {_period_text(e)}")
+    if result.topic and result.topic.see_also:
+        lines += ["", f"※ {result.topic.see_also}에 별도 안내가 있을 수 있어요."]
+    if observed_at:
+        lines += ["", f"{observed_label(observed_at)} 기준 · {source_url}"]
+
+    return kakao.response(
+        [kakao.simple_text("\n".join(lines))],
+        [kakao.quick_reply("학사일정 전체", "학사일정"),
+         kakao.quick_reply("오늘 학식")])
+
+
+def _period_text(e: dict) -> str:
+    s = dt.date.fromisoformat(e["start_date"])
+    if e.get("end_date"):
+        t = dt.date.fromisoformat(e["end_date"])
+        return f"{s.month}/{s.day}~{t.month}/{t.day}"
+    return f"{s.month}/{s.day}"
+
+
 def _dday(today: dt.date, start: dt.date, end: dt.date | None) -> str:
     """D-day 표기. 진행 중이면 '마감까지'를 보여준다 — 그게 학생이 쓸 정보다."""
     if end and start <= today <= end:
