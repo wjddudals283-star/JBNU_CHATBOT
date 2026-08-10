@@ -40,6 +40,54 @@ def load_schedule() -> dict:
     return yaml.safe_load((ROOT / "config" / "sources.yaml").read_text(encoding="utf-8"))
 
 
+def max_gap_hours(cfg: dict) -> float | None:
+    """이 소스의 **최대 크롤 간격**(시간). 예정이 없으면 None.
+
+    ★ 야간 간격을 빼먹으면 안 된다. 06:00/11:00/16:00 은 낮 간격이 5시간이라
+      촘촘해 보이지만 16:00 → 다음날 06:00 이 **14시간**이고, 그게 최대다.
+      한 번 실패하면 28시간이 되어 24시간 임계를 넘는다.
+    """
+    times = cfg.get("schedule") or []
+    if not times:
+        return None
+    mins = sorted(int(h) * 60 + int(m) for h, m in (t.split(":") for t in times))
+    if cfg.get("weekly_on") is not None:
+        # 주 1회 — 마지막 실행에서 다음 주 첫 실행까지
+        return (7 * 24 * 60 - (mins[-1] - mins[0])) / 60
+    gaps = [b - a for a, b in zip(mins, mins[1:])]
+    gaps.append(24 * 60 - mins[-1] + mins[0])       # 자정을 넘는 간격
+    return max(gaps) / 60
+
+
+def cadence_audit(sources: dict) -> list[dict]:
+    """크롤 주기 ≤ 신선도 임계 ÷ 2 를 지키는지 점검한다.
+
+    ★ 주기가 임계와 같으면 여유가 0이다. 한 번만 실패해도 즉시 stale 이 된다.
+      절반으로 잡아야 1회 실패를 흡수한다.
+    """
+    out = []
+    for key, cfg in sources.items():
+        gap = max_gap_hours(cfg)
+        # ★ 차단된 원천은 예정표가 실제 주기를 나타내지 않는다.
+        #   생협은 Render 에서 403 이라 예정표대로 안 돌고, 실제로는 노트북 백필이
+        #   유일한 경로다. 그 주기를 명시해야 점검이 거짓말을 안 한다.
+        if cfg.get("known_blocked") and cfg.get("effective_cadence_hours"):
+            gap = float(cfg["effective_cadence_hours"])
+        if gap is None:
+            continue
+        limit = float(cfg.get("stale_after_hours") or HEARTBEAT_HOURS)
+        budget = limit / 2
+        out.append({
+            "source_key": key,
+            "max_gap_hours": round(gap, 1),
+            "stale_after_hours": limit,
+            "budget_hours": budget,
+            "ok": gap <= budget,
+            "survives_one_failure": gap * 2 <= limit,
+        })
+    return out
+
+
 def _scheduled_today(cfg: dict, now: dt.datetime) -> list[dt.datetime]:
     weekly = cfg.get("weekly_on")               # 0=월 … 6=일
     if weekly is not None and now.weekday() != int(weekly):

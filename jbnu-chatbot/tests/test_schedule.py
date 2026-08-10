@@ -62,11 +62,54 @@ def test_예정_시각_창_안에서만_실행_대상이_된다():
     due = sched.due_sources(srcs, at_6)
     assert "coop_week_menu" in due and "likehome_week_menu" in due
 
-    at_9 = dt.datetime(2026, 8, 10, 9, 0, tzinfo=KST)
-    assert sched.due_sources(srcs, at_9) == []
+    # 예정 시각이 없는 시간대 (주기를 늘린 뒤 07시대가 예정에서 빠졌다)
+    at_13 = dt.datetime(2026, 8, 10, 13, 0, tzinfo=KST)
+    assert sched.due_sources(srcs, at_13) == []
 
-    at_7 = dt.datetime(2026, 8, 10, 7, 10, tzinfo=KST)
-    assert "jbnu_cafeteria_day" in sched.due_sources(srcs, at_7)
+    at_11 = dt.datetime(2026, 8, 10, 11, 10, tzinfo=KST)
+    assert "jbnu_cafeteria_day" in sched.due_sources(srcs, at_11)
+
+
+def test_모든_원천이_주기_규칙을_지킨다():
+    """★ 크롤 주기 ≤ 신선도 임계 ÷ 2.
+
+    주기가 임계와 같으면 여유가 0이라 **한 번 실패하면 즉시 stale** 이다.
+    실제로 jbnu_cafeteria_day 가 하루 1회 / 임계 24h 라 8/11 새벽에 C-2 로 떨어졌다.
+    설정만 고치면 다시 어긋나므로 규칙을 테스트로 고정한다.
+    """
+    rows = sched.cadence_audit(sched.load_schedule())
+    bad = [r for r in rows if not r["ok"]]
+    assert not bad, "주기 규칙 위반: " + ", ".join(
+        f"{r['source_key']}(간격 {r['max_gap_hours']}h > 예산 {r['budget_hours']}h)"
+        for r in bad)
+
+
+def test_1회_실패를_흡수한다():
+    """규칙의 목적 — 한 번 실패해도 임계 안에 있어야 한다."""
+    for r in sched.cadence_audit(sched.load_schedule()):
+        assert r["survives_one_failure"], f"{r['source_key']} 는 1회 실패에 stale"
+
+
+def test_야간_간격을_최대치로_센다():
+    """★ 06:00/11:00/16:00 은 낮이 5시간이라 촘촘해 보이지만
+    16:00 → 다음날 06:00 이 14시간이다. 이걸 빼먹으면 점검이 거짓말을 한다."""
+    assert sched.max_gap_hours({"schedule": ["06:00", "11:00", "16:00"]}) == 14.0
+    assert sched.max_gap_hours({"schedule": ["06:00", "11:00", "16:00", "21:00"]}) == 9.0
+    assert sched.max_gap_hours({"schedule": ["07:00"]}) == 24.0
+    assert sched.max_gap_hours({"schedule": []}) is None
+
+
+def test_주간_원천은_168시간으로_센다():
+    assert sched.max_gap_hours({"schedule": ["05:30"], "weekly_on": 0}) == 168.0
+
+
+def test_차단된_원천은_실제_주기로_센다():
+    """예정표가 실제 주기를 나타내지 않는다. 그대로 세면 점검이 통과해버린다."""
+    cfg = {"schedule": ["06:00", "16:00"], "known_blocked": {"since": "x"},
+           "effective_cadence_hours": 96, "stale_after_hours": 192,
+           "parser": "coop_week_menu"}
+    row = sched.cadence_audit({"coop_week_menu": cfg})[0]
+    assert row["max_gap_hours"] == 96.0, "예정표(14h)가 아니라 실제 주기를 봐야 한다"
 
 
 def test_운영시간_원천이_매일_예정에_들어있다():
