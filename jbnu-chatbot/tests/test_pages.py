@@ -249,3 +249,88 @@ def test_섹션은_출처와_관측시각을_반드시_들고_있다(db):
 def test_알_수_없는_상태는_거부한다(db):
     with pytest.raises(ValueError):
         _page_row(db, "/a", parse_status="아마도_됨")
+
+
+# ── 섹션 검색 · 인용 ─────────────────────────────────────────────────────
+
+from skill import section_search as ss          # noqa: E402
+from skill import templates                     # noqa: E402
+
+
+def _seed(db, url="/s", body=LIST_BLOCK, title="교내장학금"):
+    repo.upsert_page(db, page_url=url, host="www.jbnu.ac.kr", path=url,
+                     discovered_at="2026-08-11T00:00:00+09:00",
+                     parse_status="ok", title=title, last_modified="2026-07-28")
+    res = SV.parse(page(body, survey=False, title=title), page_url=url)
+    repo.replace_sections(db, page_url=url, sections=res.sections,
+                          observed_at="2026-08-11T00:00:00+09:00",
+                          page_last_modified="2026-07-28")
+    return res
+
+
+def test_잎으로_찾고_부모를_인용한다(db):
+    _seed(db)
+    r = ss.search(db, "1종 장학금 얼마야", repo=repo)
+    assert r.outcome is ss.Outcome.FOUND
+    assert "1종 장학금" in r.top.text                 # 색인은 잎
+    assert "2종 장학금" in r.top.quote_text           # 인용은 부모 블록
+    assert r.top.quote_path == "교내 장학금 > 금액별 분류"
+
+
+def test_표는_행으로_찾고_표_전체를_인용한다(db):
+    _seed(db, url="/t", body=TABLE_BLOCK, title="시험성적")
+    r = ss.search(db, "A+ 평점", repo=repo)
+    assert r.outcome is ss.Outcome.FOUND
+    assert "등급" in r.top.quote_text and "A | 4.0" in r.top.quote_text
+
+
+def test_조사와_어미를_떼어_있는_페이지를_찾는다():
+    assert ss.tokenize("자퇴하려면") == ["자퇴"]
+    assert ss.tokenize("졸업 학점 몇 학점이야") == ["졸업", "학점"]
+    assert "A+" in ss.tokenize("성적 A+ 몇 점")
+
+
+def test_인사말은_검색어가_아니다():
+    """이걸 검색하면 총장 연설문이 나온다 — 실제로 그랬다."""
+    assert ss.tokenize("안녕하세요") == []
+    assert ss.tokenize("고마워") == []
+
+
+def test_자료가_없는_것과_찾아도_없는_것을_가른다(db):
+    r = ss.search(db, "장학금", repo=repo)
+    assert r.outcome is ss.Outcome.NO_DATA        # 아직 안 긁었다
+    _seed(db)
+    r2 = ss.search(db, "기숙사 통금", repo=repo)
+    assert r2.outcome is ss.Outcome.NOT_FOUND     # 조회는 했다
+    assert r2.searched_sections > 0
+
+
+def test_비슷한_후보가_여럿이면_찍지_않는다(db):
+    _seed(db, url="/a", title="장학금 안내 A")
+    _seed(db, url="/b", title="장학금 안내 B")
+    r = ss.search(db, "1종 장학금", repo=repo)
+    assert r.outcome is ss.Outcome.AMBIGUOUS
+    assert len({h.page_url for h in r.hits}) == 2
+
+
+def test_답변에_경로와_출처가_들어간다(db):
+    _seed(db)
+    r = ss.search(db, "1종 장학금", repo=repo)
+    text = templates.render_section(r)["template"]["outputs"][0]["simpleText"]["text"]
+    assert "교내 장학금 > 금액별 분류" in text     # 질문 대상을 판단할 수 있어야 한다
+    assert "/s" in text                            # 원문 링크
+    assert "2026-07-28" in text                    # 언제 기준인지
+
+
+def test_긴_인용은_자르되_잘랐다고_말한다(db):
+    long_body = ('<div class="com-box-01"><h2>규정</h2><ul><li>총칙'
+                 '<ul>' + "".join(f"<li>제{i}조 " + "가" * 60 + "</li>"
+                                  for i in range(20)) + "</ul></li></ul></div>")
+    _seed(db, url="/long", body=long_body, title="학칙")
+    r = ss.search(db, "제3조 총칙", repo=repo)
+    assert r.outcome in (ss.Outcome.FOUND, ss.Outcome.AMBIGUOUS)
+    if r.outcome is ss.Outcome.FOUND:
+        text = templates.render_section(r)["template"]["outputs"][0]["simpleText"]["text"]
+        # 조용히 자르면 잘린 조건이 없는 조건처럼 읽힌다
+        assert "뒷부분이 있어요" in text
+        assert len(text) <= 1000

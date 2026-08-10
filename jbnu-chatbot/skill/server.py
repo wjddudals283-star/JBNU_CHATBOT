@@ -28,6 +28,7 @@ from typing import Any
 from fastapi import Depends, FastAPI, Request
 
 from skill import (aliases, auth, branch, calendar_search, ingest_api, kakao,
+                   section_search,
                    routing, safety, templates)
 from store import repo
 
@@ -291,7 +292,39 @@ def handle(db_path: pathlib.Path, block_name: str | None, payload: dict,
         return _handle_meal(db_path, params, detail, utterance, now=now)
     if handler == "deadline.upcoming":
         return _handle_upcoming(db_path, params, detail, utterance, now=now)
-    return templates.render_fallback()
+    if handler == "info.search":
+        return _handle_section(db_path, utterance)
+
+    # ★ 매핑된 블록이 없어도 **먼저 찾아본다.**
+    #   모아둔 안내가 있는데 폴백을 내보내면, 아는 것을 모른다고 하는 것이 된다.
+    #   찾아도 안 나오면 그때 폴백이다 — 조회 여부를 답에 밝힌다.
+    answered = _handle_section(db_path, utterance, only_confident=True)
+    return answered if answered is not None else templates.render_fallback()
+
+
+def _handle_section(db_path: pathlib.Path, utterance: str, *,
+                    only_confident: bool = False) -> dict | None:
+    """안내 페이지 인용 — 잎으로 찾고 부모 블록을 그대로 옮긴다.
+
+    only_confident 는 **폴백 경로**에서 쓴다. 매핑된 블록이 없어 여기까지 온
+    발화에는 찾았을 때만 답하고, 못 찾으면 폴백에 넘긴다.
+    못 찾은 걸 여기서 받아치면 인사말에도 '안내를 찾지 못했어요' 가 나간다.
+    """
+    conn = repo.connect(db_path)
+    try:
+        result = section_search.search(conn, utterance, repo=repo)
+    finally:
+        conn.close()
+
+    log.info("[skill] section tokens=%s outcome=%s hits=%s pool=%s confident_only=%s",
+             result.query_tokens, result.outcome.value, len(result.hits),
+             result.searched_sections, only_confident)
+    # ★ 폴백에서는 **확실할 때만** 답한다.
+    #   애매한 결과까지 받아치면 "안녕하세요" 에 총장 연설문 목록이 나간다.
+    #   실제로 그랬다. 인사말은 검색어가 아니다.
+    if only_confident and result.outcome is not section_search.Outcome.FOUND:
+        return None
+    return templates.render_section(result, utterance=utterance)
 
 
 SCHEDULE_URL = "https://www.jbnu.ac.kr/web/academic/schedule.do"

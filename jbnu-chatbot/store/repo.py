@@ -999,3 +999,57 @@ def page_status(conn: sqlite3.Connection, page_url: str) -> dict | None:
     r = conn.execute("SELECT * FROM page_registry WHERE page_url = ?",
                      (page_url,)).fetchone()
     return dict(r) if r else None
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# 섹션 검색 — 색인은 잎, 인용은 부모
+#
+# 지금은 LIKE 스캔이다. 4천 섹션에서는 충분하고, 14,000페이지(≈60만 섹션)로 가면
+# FTS5 로 바꿔야 한다. 그때 바뀌는 것은 이 함수 안이지 호출부가 아니다.
+
+def section_total(conn: sqlite3.Connection) -> int:
+    return conn.execute(
+        "SELECT COUNT(*) FROM page_section WHERE is_leaf = 1").fetchone()[0]
+
+
+def token_doc_freq(conn: sqlite3.Connection, token: str) -> int:
+    """이 토큰이 몇 개 섹션에 나오나. 흔한 말에 낮은 가중치를 주기 위해 센다."""
+    like = f"%{token}%"
+    return conn.execute(
+        "SELECT COUNT(*) FROM page_section "
+        "WHERE is_leaf = 1 AND (text LIKE ? OR path LIKE ?)",
+        (like, like)).fetchone()[0]
+
+
+def search_sections(conn: sqlite3.Connection, tokens: Sequence[str], *,
+                    limit: int = 300) -> list[dict[str, Any]]:
+    """토큰이 하나라도 들어간 색인 섹션을 모은다. 순위는 질의 계층에서 매긴다.
+
+    '저장하는 건 관측, 결합은 질의 계층에서' — 여기서는 고르기만 한다.
+    """
+    if not tokens:
+        return []
+    clause = " OR ".join(["(s.text LIKE ? OR s.path LIKE ?)"] * len(tokens))
+    args: list[Any] = []
+    for t in tokens:
+        args += [f"%{t}%", f"%{t}%"]
+    args.append(limit)
+    rows = conn.execute(
+        f"""
+        SELECT s.*, r.title AS page_title, r.last_modified AS page_modified,
+               r.parse_status
+          FROM page_section s
+          JOIN page_registry r ON r.page_url = s.page_url
+         WHERE s.is_leaf = 1 AND ({clause})
+         LIMIT ?
+        """, args).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_section(conn: sqlite3.Connection, section_key: str) -> dict | None:
+    r = conn.execute(
+        """SELECT s.*, r.title AS page_title, r.last_modified AS page_modified
+             FROM page_section s
+             JOIN page_registry r ON r.page_url = s.page_url
+            WHERE s.section_key = ?""", (section_key,)).fetchone()
+    return dict(r) if r else None

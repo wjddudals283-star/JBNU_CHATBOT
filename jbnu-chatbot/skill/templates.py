@@ -443,3 +443,91 @@ def render_fallback() -> dict:
         [kakao.quick_reply("오늘 학식"), kakao.quick_reply("총학 공지"),
          kakao.quick_reply("열람실 운영시간"), kakao.quick_reply("공약 진행상황")],
     )
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# 안내 페이지 인용
+#
+# ★ 요약하지 않는다. 찾은 문단을 그대로 옮긴다. 규정 요약은 특히 위험하다.
+# ★ 길면 자르되 **잘랐다는 사실을 표시**한다. 조용히 자르면 잘린 조건이
+#   없는 조건처럼 읽힌다.
+# ★ 경로를 붙인다. 답에 질문 대상이 없으면 학생이 판단할 수 없다.
+
+QUOTE_BUDGET = 700          # 인용 본문에 쓸 최대 글자 (simpleText 1000 안에서)
+SEARCH_HINT = "총학생회에 직접 물어보면 확인해 드릴게요."
+
+
+def _quote_block(hit) -> tuple[str, bool]:
+    """인용문과 '잘렸는가'. 자를 때는 문장 경계에서 자른다."""
+    text = (hit.quote_text or hit.text or "").strip()
+    if len(text) <= QUOTE_BUDGET:
+        return text, False
+    cut = text[:QUOTE_BUDGET]
+    for sep in ("\n", ". ", "다. ", "요. "):
+        i = cut.rfind(sep)
+        if i > QUOTE_BUDGET * 0.5:
+            cut = cut[:i + len(sep)]
+            break
+    return cut.rstrip(), True
+
+
+def _source_line(hit) -> str:
+    when = hit.page_modified or observed_label(hit.observed_at)
+    page = hit.page_title or "전북대 홈페이지"
+    return f"📄 {page}" + (f" ({when} 기준)" if when else "")
+
+
+def render_section(result, *, utterance: str = "") -> dict:
+    """섹션 검색 결과 → 카카오 응답."""
+    from skill.section_search import Outcome
+
+    subject = result.subject or (utterance or "").strip()[:20]
+
+    if result.outcome is Outcome.NO_QUERY:
+        return kakao.response(
+            [kakao.simple_text(
+                "무엇을 찾아드릴지 잘 모르겠어요.\n"
+                "'장학금', '휴학', '복수전공'처럼 단어를 넣어 물어봐 주세요.")],
+            [kakao.quick_reply("처음으로")])
+
+    if result.outcome is Outcome.NO_DATA:
+        # ★ 조회할 자료가 아직 없다. '그런 내용이 없다'와 다른 말이다.
+        return kakao.response(
+            [kakao.simple_text(
+                f"'{subject}' 를 찾지 못했어요.\n"
+                f"학교 안내 페이지를 아직 가져오지 못했어요.\n\n{SEARCH_HINT}")],
+            [kakao.quick_reply("처음으로")])
+
+    if result.outcome is Outcome.NOT_FOUND:
+        # ★ 조회는 했다. 몇 개를 봤는지 밝힌다 — 안 찾아보고 없다고 한 것과 다르다.
+        return kakao.response(
+            [kakao.simple_text(
+                f"'{subject}' 에 대한 안내를 찾지 못했어요.\n"
+                f"모아둔 안내 {result.searched_sections:,}건을 확인했어요.\n\n"
+                f"{SEARCH_HINT}")],
+            [kakao.quick_reply("처음으로")])
+
+    if result.outcome is Outcome.AMBIGUOUS:
+        # ★ 비슷한 후보가 여럿이면 찍지 않는다. 찍는 것은 추론이다.
+        # 제목에 **페이지 이름**을 둔다. 경로 끝칸('개 념', '이수학점')만 보면
+        # 어느 문서인지 알 수 없어 고를 수가 없다.
+        items = [{"title": h.page_title or h.quote_path,
+                  "description": (h.quote_path or h.path).split(" > ")[-1],
+                  "link": h.page_url}
+                 for h in result.hits[:kakao.MAX_LIST_ITEMS]]
+        card, _ = kakao.list_card(f"'{subject}' 안내가 여러 곳에 있어요", items)
+        return kakao.response(
+            [card, kakao.simple_text("어느 쪽을 찾으시는지 눌러서 확인해 주세요.")],
+            [kakao.quick_reply("처음으로")])
+
+    hit = result.top
+    quote, clipped = _quote_block(hit)
+    lines = [f"[{hit.quote_path or hit.path}]", "", quote]
+    if clipped:
+        # 자른 사실을 숨기지 않는다. 잘린 조건은 없는 조건처럼 읽힌다.
+        lines += ["", "…(뒷부분이 있어요. 아래 링크에서 전문을 확인해 주세요)"]
+    lines += ["", _source_line(hit), hit.page_url]
+
+    return kakao.response(
+        [kakao.simple_text("\n".join(lines))],
+        [kakao.quick_reply("처음으로")])
