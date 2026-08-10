@@ -100,13 +100,14 @@ def due_sources(sources: dict, now: dt.datetime, *, window_min: int = 30,
 # 하트비트 — 침묵 감지
 # ═══════════════════════════════════════════════════════════════
 
-def heartbeat(conn, sources: dict, now: dt.datetime) -> list[dict]:
-    """소스별 마지막 성공 크롤. 24시간 넘게 성공이 없으면 경보.
+def source_freshness(conn, sources: dict, now: dt.datetime) -> list[dict]:
+    """소스별 마지막 성공 크롤 + 임계 초과 여부.
 
-    ★ 실패보다 침묵이 위험하다. 실패는 crawl_run 에 남지만,
-      스케줄러 자체가 안 돌면 아무 기록도 안 남는다. 그 상태를 잡는 게 이 함수다.
+    ★ 임계는 소스마다 다르다. 생협은 노트북 주 1회 백필이라 8일(192h)이 정상이고,
+      24시간 기준을 그대로 적용하면 매일 경보가 뜬다.
+      반대로 임계를 아예 안 두면 **백필이 조용히 멈춘 걸 못 잡는다.**
     """
-    alerts = []
+    out = []
     for key, cfg in sources.items():
         if cfg.get("parser") not in run_mod.PARSERS:
             continue
@@ -117,14 +118,38 @@ def heartbeat(conn, sources: dict, now: dt.datetime) -> list[dict]:
         ).fetchone()
         last_ok = row["last_ok"] if row else None
         age = repo.staleness_hours(last_ok, now) if last_ok else None
-        if age is None or age > HEARTBEAT_HOURS:
-            alerts.append({
-                "source_key": key, "last_success": last_ok,
-                "age_hours": round(age, 1) if age is not None else None,
-                "reason": "성공 크롤 기록 없음" if age is None
-                          else f"{age:.1f}시간째 성공 없음",
-            })
-    return alerts
+        limit = float(cfg.get("stale_after_hours") or HEARTBEAT_HOURS)
+        blocked = cfg.get("known_blocked")
+
+        out.append({
+            "source_key": key,
+            "label": cfg.get("label", key),
+            "last_success": last_ok,
+            "age_hours": round(age, 1) if age is not None else None,
+            "age_days": round(age / 24, 1) if age is not None else None,
+            "stale_after_hours": limit,
+            "stale": age is None or age > limit,
+            "known_blocked": bool(blocked),
+            "blocked_since": (blocked or {}).get("since"),
+            "workaround": (blocked or {}).get("workaround"),
+            "reason": ("성공 크롤 기록 없음" if age is None
+                       else f"{age:.1f}시간째 성공 없음 (임계 {limit:.0f}h)"
+                       if age > limit else "정상"),
+        })
+    return out
+
+
+def heartbeat(conn, sources: dict, now: dt.datetime) -> list[dict]:
+    """침묵 감지 — 임계를 넘긴 소스만 돌려준다.
+
+    ★ 실패보다 침묵이 위험하다. 실패는 crawl_run 에 남지만,
+      스케줄러 자체가 안 돌면 아무 기록도 안 남는다. 그 상태를 잡는 게 이 함수다.
+
+    ★ 알려진 차단(known_blocked)이라도 **면제하지 않는다.**
+      우회 경로(노트북 백필)가 도는 게 전제이므로, 임계만 늘리고 감시는 유지한다.
+      면제해 버리면 백필이 멈춘 걸 영영 모른다.
+    """
+    return [f for f in source_freshness(conn, sources, now) if f["stale"]]
 
 
 # ═══════════════════════════════════════════════════════════════

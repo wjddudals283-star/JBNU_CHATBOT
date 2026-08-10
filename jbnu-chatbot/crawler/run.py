@@ -22,8 +22,9 @@ if str(ROOT) not in sys.path:
 
 from crawler import fetch as fetch_mod          # noqa: E402
 from crawler import ingest as ingest_mod        # noqa: E402
-from crawler.parsers import coop_week_menu       # noqa: E402
-from crawler.parsers import jbnu_cafeteria_day   # noqa: E402
+from crawler.parsers import coop_week_menu          # noqa: E402
+from crawler.parsers import jbnu_academic_schedule  # noqa: E402
+from crawler.parsers import jbnu_cafeteria_day      # noqa: E402
 from crawler.parsers import likehome_week_menu   # noqa: E402
 from store import repo                           # noqa: E402
 
@@ -33,10 +34,17 @@ _DATA = pathlib.Path(os.environ.get("JBNU_DATA_DIR", str(ROOT / "data")))
 DB_PATH = pathlib.Path(os.environ.get("JBNU_DB_PATH", str(_DATA / "jbnu.db")))
 SNAPSHOT_DIR = _DATA / "snapshots"
 
+def _schedule_parser(year: int | None = None, semester: int | None = None):
+    def _p(html: str):
+        return jbnu_academic_schedule.parse(html, ac_year=year, ac_semester=semester)
+    return _p
+
+
 PARSERS = {
     "likehome_week_menu": likehome_week_menu.parse,
     "jbnu_cafeteria_day": jbnu_cafeteria_day.parse,
     "coop_week_menu": coop_week_menu.parse,
+    "jbnu_academic_schedule": jbnu_academic_schedule.parse,
 }
 
 # 이 원천들이 시설을 스스로 만든다 (facility_id 가 config 에 하나로 안 잡힌다)
@@ -66,11 +74,30 @@ def ensure_facility(conn, source_key: str, cfg: dict) -> None:
     conn.commit()
 
 
+def academic_variants(today: dt.date, *, back: int = 1, ahead: int = 1) -> list[dict]:
+    """학사일정은 (연도, 학기) 조합으로 조회한다.
+
+    ★ acYear/acSemester 로 과거·미래가 열리는 걸 살린다.
+      현재 학년도 앞뒤로 함께 긁어두면 사고가 나도 복구되고,
+      여러 해가 쌓이면 '콤마로 묶인 항목이 독립 항목인가'를 **관측으로** 판단할 수 있다.
+    """
+    year = today.year
+    out = []
+    for y in range(year - back, year + ahead + 1):
+        for s in (1, 2):
+            out.append({"acYear": str(y), "acSemester": str(s)})
+    return out
+
+
 def run_source(conn, source_key: str, cfg: dict, *, date: str | None,
                dry_run: bool, force: bool) -> None:
     parser = PARSERS.get(cfg.get("parser"))
     if parser is None:
         print(f"  [{source_key}] 파서 미구현 — 건너뜀")
+        return
+
+    if cfg.get("variant_strategy") == "academic_year":
+        _run_variants(conn, source_key, cfg, parser, dry_run=dry_run)
         return
 
     params = dict(cfg.get("params") or {})
@@ -121,6 +148,62 @@ def run_source(conn, source_key: str, cfg: dict, *, date: str | None,
         print(f"    · {r}")
     if report.error:
         print(f"    ! {report.error}")
+
+
+def _run_variants(conn, source_key: str, cfg: dict, parser, *,
+                  dry_run: bool) -> None:
+    """(연도, 학기) 조합을 차례로 긁는다.
+
+    ★ force=True 로 돈다. 한 source_key 아래 여러 응답이 오가므로
+      stable_hash 기반 'unchanged' 판정이 변형끼리 서로를 덮어쓴다.
+      문서가 작아서 매번 파싱해도 부담이 없고, UNIQUE upsert 가 중복을 막는다.
+    """
+    csrf = cfg.get("csrf")
+    total_ok = total_bad = 0
+    for v in academic_variants(dt.date.today()):
+        params = {**(cfg.get("params") or {}), **v}
+        tag = f"{v['acYear']}-{v['acSemester']}"
+        try:
+            result = fetch_mod.fetch_with_csrf(
+                source_key, cfg["url"], page_url=csrf["page_url"],
+                meta_name=csrf.get("meta_name", "_csrf"),
+                header=csrf.get("header", "X-CSRF-Token"),
+                params=params, media_type=cfg.get("media_type", "html"))
+        except Exception as e:  # noqa: BLE001
+            print(f"  [{tag}] fetch 실패 {type(e).__name__}: {e}")
+            continue
+
+        year, sem = int(v["acYear"]), int(v["acSemester"])
+
+        def _p(html: str, _y=year, _s=sem):
+            return jbnu_academic_schedule.parse(html, ac_year=_y, ac_semester=_s)
+
+        if dry_run:
+            try:
+                parsed = _p(result.text)
+                note = " (미게시)" if parsed.not_published else ""
+                print(f"  [{tag}] {result.http_status} {len(result.content):,}B "
+                      f"→ {len(parsed.calendar_entries)}건{note}")
+                for e in parsed.calendar_entries[:4]:
+                    rng = f" ~ {e.end_date}" if e.end_date else ""
+                    print(f"      {e.start_date}{rng:<14} {e.title[:40]}")
+            except Exception as e:  # noqa: BLE001
+                print(f"  [{tag}] 파싱 실패 {type(e).__name__}: {e}")
+            continue
+
+        rep = ingest_mod.ingest(
+            conn, result, parser=_p, snapshot_dir=SNAPSHOT_DIR,
+            tier=cfg.get("tier", "T1"),
+            extraction_method=cfg.get("extraction_method", "html_selector"),
+            confidence=float(cfg.get("confidence", 0.95)),
+            run_id=f"run/{source_key}/{tag}/{result.fetched_at}",
+            force=True,
+        )
+        total_ok += rep.calendar
+        total_bad += rep.quarantined
+        print(f"  [{tag}] outcome={rep.outcome}  일정 {rep.calendar}건")
+    if not dry_run:
+        print(f"  합계: 일정 {total_ok}건 / 격리 {total_bad}건")
 
 
 def _print_summary(parsed) -> None:

@@ -112,13 +112,23 @@ def test_스모크는_기본적으로_꺼져_있다(isolated_db, monkeypatch):
     assert len(called) == 1
 
 
-def test_프로덕션_서버는_스모크를_켠다(tmp_path, monkeypatch):
-    """기본값이 False 라서, 서버가 명시적으로 켜는지 확인해야 한다."""
+def test_스모크는_환경변수를_따른다(tmp_path, monkeypatch):
+    """★ with_scheduler 플래그가 아니라 RUN_SCHEDULER 환경변수를 따라야 한다.
+
+    플래그에 묶으면 TestClient 를 여는 모든 테스트가 실사이트를 두드린다.
+    (실제로 그렇게 만들었다가 테스트 스위트가 멈췄다.)
+    """
     c = repo.connect(tmp_path / "p.db")
     repo.init_db(c)
     c.close()
+
+    monkeypatch.delenv("RUN_SCHEDULER", raising=False)
     app = server.create_app(tmp_path / "p.db", with_scheduler=True)
-    assert app.state.scheduler.smoke_enabled is True
+    assert app.state.scheduler.smoke_enabled is False, "테스트 환경에서는 꺼진다"
+
+    monkeypatch.setenv("RUN_SCHEDULER", "1")
+    app2 = server.create_app(tmp_path / "p.db", with_scheduler=True)
+    assert app2.state.scheduler.smoke_enabled is True, "프로덕션에서는 켜진다"
 
 
 def test_status가_상태를_구조화해_돌려준다(isolated_db, monkeypatch):
@@ -149,16 +159,30 @@ def test_한_소스가_죽어도_나머지는_돈다(isolated_db, monkeypatch, c
 
 
 def test_예외가_나도_루프가_죽지_않는다(isolated_db, monkeypatch):
-    """루프가 죽으면 아무 기록도 안 남는 침묵이 된다."""
+    """루프가 죽으면 아무 기록도 안 남는 침묵이 된다.
+
+    ★ tick() 자체를 터뜨린다. run_mod.main 을 터뜨리면 **due 인 소스가 있어야만**
+      호출되므로, 실행 시각에 따라 통과/무한루프가 갈린다.
+      (실제로 그렇게 짰다가 자정 넘어 돌리니 멈췄다 — 예정 시각 전이라 due 가 없었다.)
+    """
     lp = loop_mod.SchedulerLoop(interval_sec=1)
 
-    def boom(argv):
+    def boom(self, now=None):
         lp._stop.set()      # 한 바퀴만 돌고 나가게 한다
         raise RuntimeError("원천 폭발")
 
-    monkeypatch.setattr(run_mod, "main", boom)
+    monkeypatch.setattr(loop_mod.SchedulerLoop, "tick", boom)
     lp._run()               # 예외가 밖으로 새면 여기서 터진다
     assert lp.last_error and "원천 폭발" in lp.last_error
+
+
+def test_루프_테스트는_실행_시각에_의존하지_않는다(isolated_db, monkeypatch):
+    """회귀 방지 — due 여부에 기대는 순간 밤낮에 따라 결과가 갈린다."""
+    monkeypatch.setattr(run_mod, "main", lambda argv: 0)
+    lp = loop_mod.SchedulerLoop()
+    for hour in (0, 6, 9, 23):
+        got = lp.tick(dt.datetime(2026, 8, 11, hour, 5, tzinfo=KST))
+        assert isinstance(got, list)   # 어느 시각이든 즉시 끝나야 한다
 
 
 def test_RUN_SCHEDULER_없으면_스레드를_안_띄운다(tmp_path, monkeypatch):
@@ -178,6 +202,8 @@ def test_스케줄러_상태는_인증_뒤에서_보고된다(tmp_path, monkeypa
     from skill import auth
     token = "loop-status-token-0123456789"
     monkeypatch.setenv(auth.TOKEN_ENV, token)
+    # 실제 크롤을 타지 않게 틱을 막는다. TestClient 가 lifespan 으로 루프를 띄운다.
+    monkeypatch.setattr(loop_mod.SchedulerLoop, "tick", lambda self, now=None: [])
     c = repo.connect(tmp_path / "y.db")
     repo.init_db(c)
     c.close()

@@ -29,6 +29,7 @@ class IngestReport:
     quarantined: int = 0
     hours: int = 0
     prices: int = 0
+    calendar: int = 0
     parser_called: bool = False
     error: str | None = None
     # 차단 사유가 본문에 적혀 있는 경우가 많다. 진단의 출발점이라 버리지 않는다.
@@ -125,6 +126,15 @@ def ingest(conn: sqlite3.Connection, result: fetch_mod.FetchResult, *,
     # ★ 시간표를 통째로 파싱한 시설만 폐쇄세계 가정을 켠다.
     for fid in getattr(parsed, "complete_hours_facilities", ()):
         repo.set_hours_coverage(conn, fid, "complete")
+
+    # 학사일정 (T1) — 있으면 같이 저장한다.
+    cal_ok = 0
+    for e in getattr(parsed, "calendar_entries", []):
+        repo.upsert_calendar(
+            conn, e,
+            repo.SourceMeta(valid_from=result.fetched_at[:10], **meta_base))
+        cal_ok += 1
+    report.calendar = cal_ok
 
     # 단가표 (T2)
     price_ok = 0

@@ -122,11 +122,21 @@ def test_C분기는_추측한_메뉴를_내놓지_않는다(db):
     assert "확인하지 못했어요" in outs["simpleText"]["text"]
 
 
-def test_모르는_식당은_폴백(db):
+def test_모르는_식당은_전체_목록으로_간다(db):
+    """★ 폴백이 아니다. 자료는 있고 어느 식당인지만 모르는 상태다.
+
+    '없는식당'은 사전에 없으니 식당 미지정과 같은 취급이 맞다.
+    """
     r = server.handle(db, "food.menu.today", _payload("없는식당 메뉴", outlet="없는식당"),
                       now=NOW)
-    text = r["template"]["outputs"][0]["simpleText"]["text"]
-    assert "준비되지 않았어요" in text
+    assert kakao.validate(r) == []
+    card = r["template"]["outputs"][0]["listCard"]
+    assert "후생관" in [i["title"] for i in card["items"]]
+
+
+def test_지원하지_않는_블록만_폴백(db):
+    r = server.handle(db, "council.pledge.status", _payload("공약 어떻게 됐어"), now=NOW)
+    assert "준비되지 않았어요" in r["template"]["outputs"][0]["simpleText"]["text"]
 
 
 def test_별칭이_같은_식당으로_모인다(db):

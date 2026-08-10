@@ -250,6 +250,44 @@ def _render_c2(answer: MealAnswer, *, facility_name: str, dl: str, meal_ko: str,
 
 # ── 폴백 ────────────────────────────────────────────────────────
 
+def render_overview(rows, *, date: str, meal_type: str) -> dict:
+    """식당을 안 말한 발화 — 운영 중인 곳을 한 장으로.
+
+    rows: [(facility_id, 이름, MealAnswer), ...]
+
+    ★ 폴백으로 보내지 않는다. 자료는 있고 어느 식당인지만 모르는 상태다.
+      '모른다'와 '안 물었다'는 다르다.
+    """
+    meal_ko = MEAL_KO.get(meal_type, meal_type)
+    dl = date_label(date)
+
+    items, operating = [], []
+    for _fid, name, a in rows:
+        if a.branch is Branch.A:
+            n = sum(len(r["items"]) for r in a.operating_rows)
+            first = next((i["name"] for r in a.operating_rows for i in r["items"]), "")
+            items.append({"title": name,
+                          "description": f"{first} 외 {n - 1}개" if n > 1 else first})
+            operating.append(name)
+        elif a.branch is Branch.B:
+            items.append({"title": name, "description": "오늘은 운영 안 해요"})
+        else:
+            items.append({"title": name, "description": "확인 중"})
+
+    if not items:
+        return render_fallback()
+
+    header = f"{dl} {meal_ko} 학식"
+    card, dropped = kakao.list_card(
+        header, items,
+        overflow_button=(kakao.web_button(f"전체 {len(items)}곳", "https://coopjbnu.kr/menu/week_menu.php")
+                         if len(items) > kakao.MAX_LIST_ITEMS else None))
+
+    qr = [kakao.quick_reply(f"{n} 자세히", f"{n} {meal_ko}") for n in operating[:3]]
+    qr.append(kakao.quick_reply("내일 학식", f"내일 {meal_ko}"))
+    return kakao.response([card], qr)
+
+
 def render_fallback() -> dict:
     """못 알아들었을 때. **못 알아들었다는 것을 분명히 알린다.**"""
     return kakao.response(

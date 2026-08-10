@@ -237,6 +237,39 @@ CREATE TABLE IF NOT EXISTS menu_price (
   UNIQUE(facility_id, name_normalized, audience, valid_from)
 );
 
+CREATE TABLE IF NOT EXISTS academic_calendar (
+  id           TEXT PRIMARY KEY,
+  ac_year      INTEGER NOT NULL,
+  ac_semester  INTEGER NOT NULL CHECK (ac_semester IN (1, 2)),
+  title        TEXT NOT NULL,
+  start_date   TEXT NOT NULL,
+  end_date     TEXT,                 -- 단일 날짜면 NULL. '~' 로 기간이 명시된 것만 채운다
+  category     TEXT,
+  -- ★ 원문 그대로. '<dd>제2학기 개강, 일반대학원 종합시험</dd>' 처럼 콤마로 묶인 항목을
+  --   **쪼개지 않는다.** 콤마를 항목 구분자로 보는 것 자체가 추론이다 —
+  --   원천이 "이건 두 건"이라고 말한 적이 없다.
+  --   여러 해를 백필해 같은 항목이 단독으로 나타나면 그때 관측으로 판단한다.
+  raw_text     TEXT,
+
+  source_id         TEXT NOT NULL REFERENCES source_snapshot(id),
+  source_url        TEXT NOT NULL,
+  observed_at       TEXT NOT NULL,
+  valid_from        TEXT NOT NULL,
+  valid_to          TEXT,
+  confidence        REAL NOT NULL CHECK (confidence >= 0 AND confidence <= 1),
+  extraction_method TEXT NOT NULL
+                    CHECK (extraction_method IN ('html_selector','json_api',
+                                                 'pdf_parse','vlm_ocr','manual_admin')),
+  status            TEXT NOT NULL DEFAULT 'verified'
+                    CHECK (status IN ('verified','quarantine','needs_review',
+                                      'superseded','expired','conflict')),
+  tier              TEXT NOT NULL DEFAULT 'T1' CHECK (tier IN ('T1','T2','T3','T4')),
+  CHECK (tier <> 'T4' OR valid_to IS NOT NULL),
+  CHECK (end_date IS NULL OR end_date >= start_date),
+  -- ★ 학사일정은 개정된다 → 시계열 규칙에 따라 valid_from 이 식별자·UNIQUE 에 들어간다
+  UNIQUE(ac_year, ac_semester, start_date, title, valid_from)
+);
+
 CREATE TABLE IF NOT EXISTS notice (
   id            TEXT PRIMARY KEY,
   issuer_org_id TEXT REFERENCES organization(id),
@@ -380,4 +413,6 @@ CREATE INDEX IF NOT EXISTS idx_price_join   ON menu_price(facility_id, name_norm
 CREATE INDEX IF NOT EXISTS idx_hours_lookup ON operating_hours(facility_id, meal_type);
 CREATE INDEX IF NOT EXISTS idx_alias        ON alias(surface_form);
 CREATE INDEX IF NOT EXISTS idx_notice_pub   ON notice(published_at DESC);
+CREATE INDEX IF NOT EXISTS idx_calendar_date ON academic_calendar(start_date);
+CREATE INDEX IF NOT EXISTS idx_calendar_term ON academic_calendar(ac_year, ac_semester);
 CREATE INDEX IF NOT EXISTS idx_crawl_source ON crawl_run(source_key, started_at DESC);

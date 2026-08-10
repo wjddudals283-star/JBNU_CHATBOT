@@ -124,11 +124,15 @@ class SchedulerLoop:
             from crawler import smoke as smoke_mod
             self.last_smoke = smoke_mod.run()
             self._smoke_date = today
-            v = self.last_smoke["verdict"]
-            if not self.last_smoke["coop_passing_variants"]:
-                log.error("[scheduler] SMOKE PROBLEM %s", v)
+            alerts = self.last_smoke.get("alerts") or []
+            # ★ 알려진 차단은 경보로 올리지 않는다.
+            #   실패가 정상 상태인 원천을 매일 ERROR 로 올리면 경고등이 상시 켜지고,
+            #   그러면 진짜 문제가 묻힌다. 경보 판단은 smoke._alerts 가 한다.
+            if alerts:
+                log.warning("[scheduler] SMOKE alerts=%s",
+                            [a["tag"] + ":" + a["source_key"] for a in alerts])
             else:
-                log.info("[scheduler] SMOKE ok %s", v)
+                log.info("[scheduler] SMOKE ok — 알려진 상태와 동일")
         except Exception:  # noqa: BLE001
             line = traceback.format_exc().strip().splitlines()[-1]
             log.error("[scheduler] SMOKE ERROR %s", line)
@@ -159,6 +163,7 @@ class SchedulerLoop:
                 "at": self.last_smoke.get("at"),
                 "verdict": self.last_smoke.get("verdict"),
                 "coop_passing_variants": self.last_smoke.get("coop_passing_variants"),
+                "alerts": self.last_smoke.get("alerts"),
             },
         }
 

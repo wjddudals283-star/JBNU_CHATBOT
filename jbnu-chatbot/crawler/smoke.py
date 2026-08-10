@@ -108,8 +108,36 @@ def run_probe(client: httpx.Client, p: Probe) -> dict[str, Any]:
                 "elapsed_ms": round((time.perf_counter() - t0) * 1000)}
 
 
-def run(date: str | None = None, *, timeout: float = 20.0) -> dict[str, Any]:
-    """전 프로브 실행. 서버의 네트워크 위치에서 본 결과를 그대로 돌려준다."""
+# 프로브 이름 접두사 → sources.yaml 의 source_key
+PROBE_SOURCE = {"coop/": "coop_week_menu", "likehome/": "likehome_week_menu",
+                "jbnu/": "jbnu_cafeteria_day"}
+
+
+def _source_of(name: str) -> str | None:
+    for prefix, key in PROBE_SOURCE.items():
+        if name.startswith(prefix):
+            return key
+    return None
+
+
+def known_blocked(sources: dict, source_key: str) -> dict | None:
+    cfg = (sources or {}).get(source_key) or {}
+    return cfg.get("known_blocked")
+
+
+def run(date: str | None = None, *, timeout: float = 20.0,
+        sources: dict | None = None) -> dict[str, Any]:
+    """전 프로브 실행. 서버의 네트워크 위치에서 본 결과를 그대로 돌려준다.
+
+    ★ 감시 방향
+      · 알려진 차단(known_blocked)이 여전히 차단 → 정상 상태. INFO
+      · 알려진 차단이 **풀림(200)** → ★알린다. 1차 원천을 되찾을 기회다
+      · 알려진 차단이 아닌데 차단 → 진짜 문제. ERROR
+    """
+    if sources is None:
+        from crawler import schedule as sched_mod
+        sources = sched_mod.load_schedule()
+
     now = dt.datetime.now(KST)
     date = date or now.strftime("%Y%m%d")
     probes = coop_variants(date) + other_sources()
@@ -119,6 +147,7 @@ def run(date: str | None = None, *, timeout: float = 20.0) -> dict[str, Any]:
                       follow_redirects=True) as c:
         for p in probes:
             res = run_probe(c, p)
+            res["source_key"] = _source_of(p.name)
             results.append(res)
             log.info("[smoke] %s status=%s bytes=%s %s",
                      res["name"], res.get("status"), res.get("bytes"),
@@ -127,15 +156,54 @@ def run(date: str | None = None, *, timeout: float = 20.0) -> dict[str, Any]:
     coop = [r for r in results if r["name"].startswith("coop/")]
     coop_ok = [r["name"] for r in coop if r["ok"]]
     verdict = _verdict(coop)
-    log.info("[smoke] SUMMARY coop_ok=%s verdict=%s", coop_ok or "none", verdict)
+
+    alerts = _alerts(results, sources)
+    for a in alerts:
+        (log.warning if a["kind"] == "block_lifted" else log.error)(
+            "[smoke] %s source=%s %s", a["tag"], a["source_key"], a["message"])
+    if not alerts:
+        log.info("[smoke] SUMMARY ok — 경보 없음 (coop_ok=%s)", coop_ok or "none")
 
     return {
         "at": now.isoformat(),
         "date_probed": date,
         "verdict": verdict,
         "coop_passing_variants": coop_ok,
+        "alerts": alerts,
         "results": results,
     }
+
+
+def _alerts(results: list[dict[str, Any]], sources: dict) -> list[dict[str, Any]]:
+    """소스별로 '알려진 상태'와 다른 것만 경보로 올린다."""
+    out: list[dict[str, Any]] = []
+    by_source: dict[str, list[dict[str, Any]]] = {}
+    for r in results:
+        if r.get("source_key"):
+            by_source.setdefault(r["source_key"], []).append(r)
+
+    for key, rows in by_source.items():
+        any_ok = any(r["ok"] for r in rows)
+        blocked_info = known_blocked(sources, key)
+
+        if blocked_info and any_ok:
+            # ★ 감시 방향을 뒤집은 지점. 차단이 풀렸다 = 1차 원천 복구 기회.
+            passing = [r["name"] for r in rows if r["ok"]]
+            out.append({
+                "kind": "block_lifted", "tag": "BLOCK-LIFTED", "source_key": key,
+                "message": (f"차단이 풀렸다 (통과: {passing}). "
+                            f"{blocked_info.get('since')} 부터 차단으로 기록돼 있었다. "
+                            f"sources.yaml 의 known_blocked 를 지우고 1차로 되돌릴 것"),
+                "passing": passing,
+            })
+        elif not blocked_info and not any_ok:
+            out.append({
+                "kind": "newly_blocked", "tag": "BLOCKED", "source_key": key,
+                "message": f"전 변형 실패. 새 차단이거나 원천 장애 "
+                           f"({rows[0].get('status')})",
+            })
+        # blocked_info 이고 여전히 차단 → 알려진 상태. 경보 없음(소음 방지)
+    return out
 
 
 def _verdict(coop: list[dict[str, Any]]) -> str:

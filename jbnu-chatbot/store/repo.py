@@ -135,6 +135,62 @@ def procedure_id(title: str, valid_from: str) -> str:
     return f"jbnu:procedure/{_slug(title)}/{valid_from}"
 
 
+def academic_calendar_id(ac_year: int, ac_semester: int, start_date: str,
+                         title: str, valid_from: str) -> str:
+    """학사일정은 개정된다 → 시계열 규칙에 따라 valid_from 이 들어간다."""
+    return (f"jbnu:calendar/{ac_year}/{ac_semester}/{start_date}"
+            f"/{_slug(title)[:40]}/{valid_from}")
+
+
+def upsert_calendar(conn: sqlite3.Connection, entry, meta: SourceMeta) -> str:
+    m = meta.as_row()
+    cid = academic_calendar_id(entry.ac_year, entry.ac_semester,
+                               entry.start_date, entry.title, m["valid_from"])
+    conn.execute(
+        """
+        INSERT INTO academic_calendar
+          (id, ac_year, ac_semester, title, start_date, end_date, raw_text,
+           source_id, source_url, observed_at, valid_from, valid_to,
+           confidence, extraction_method, status, tier)
+        VALUES (:id,:y,:s,:title,:start,:end,:raw,
+                :source_id,:source_url,:observed_at,:valid_from,:valid_to,
+                :confidence,:extraction_method,:status,:tier)
+        ON CONFLICT(ac_year, ac_semester, start_date, title, valid_from)
+        DO UPDATE SET end_date = excluded.end_date, raw_text = excluded.raw_text,
+                      source_id = excluded.source_id,
+                      observed_at = excluded.observed_at,
+                      status = excluded.status
+        """,
+        {"id": cid, "y": entry.ac_year, "s": entry.ac_semester,
+         "title": entry.title, "start": entry.start_date, "end": entry.end_date,
+         "raw": entry.raw_text, **m},
+    )
+    return cid
+
+
+def query_calendar(conn: sqlite3.Connection, *, since: str, until: str,
+                   limit: int = 50) -> list[dict[str, Any]]:
+    """기간에 걸치는 일정. 진행 중인 것도 포함한다.
+
+    (start <= until) AND (COALESCE(end, start) >= since)
+    """
+    rows = _fact_select(
+        conn, "academic_calendar",
+        "start_date <= ? AND COALESCE(end_date, start_date) >= ?",
+        (until, since),
+    )
+    # 같은 (start, title) 이 valid_from 별로 여러 벌이면 최신 관측만 쓴다
+    best: dict[tuple, sqlite3.Row] = {}
+    for r in rows:
+        key = (r["start_date"], r["title"])
+        cur = best.get(key)
+        if cur is None or r["valid_from"] > cur["valid_from"]:
+            best[key] = r
+    out = [dict(r) for r in best.values()]
+    out.sort(key=lambda r: (r["start_date"], r["title"]))
+    return out[:limit]
+
+
 def pledge_progress_id(pledge_id_: str, valid_from: str) -> str:
     """공약 진행상황은 갱신될 때마다 새 관측이다.
 

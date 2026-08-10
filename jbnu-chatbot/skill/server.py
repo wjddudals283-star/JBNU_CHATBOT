@@ -26,8 +26,10 @@ from typing import Any
 
 from fastapi import Depends, FastAPI, Request
 
-from skill import auth, branch, kakao, safety, templates
+from skill import aliases, auth, branch, kakao, safety, templates
 from store import repo
+
+log = logging.getLogger("jbnu.skill")
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 _DATA = pathlib.Path(os.environ.get("JBNU_DATA_DIR", str(ROOT / "data")))
@@ -93,7 +95,10 @@ def _configure_logging() -> None:
 def create_app(db_path: pathlib.Path | None = None, *,
                with_scheduler: bool | None = None) -> FastAPI:
     _configure_logging()
-    app = FastAPI(title="전북대 총학 챗봇 스킬서버")
+    # ★ 자동 문서를 끈다. /openapi.json 은 엔드포인트 구조와 docstring 을 그대로
+    #   노출한다. /health 를 축소한 것과 같은 이유 — 공개될 필요가 없는 운영 정보다.
+    app = FastAPI(title="전북대 총학 챗봇 스킬서버",
+                  openapi_url=None, docs_url=None, redoc_url=None)
     app.state.db_path = db_path or DB_PATH
     app.state.scheduler = None
 
@@ -106,9 +111,11 @@ def create_app(db_path: pathlib.Path | None = None, *,
         from contextlib import asynccontextmanager
 
         from crawler import loop as loop_mod
-        # 프로덕션에서는 일 1회 실사이트 스모크를 켠다.
-        # 위치 의존 결함(한국 200 / 해외 403)은 배포 서버에서만 드러난다.
-        app.state.scheduler = loop_mod.SchedulerLoop(smoke=True)
+        # ★ 스모크는 with_scheduler 플래그가 아니라 **환경변수**를 따른다.
+        #   테스트는 with_scheduler=True 를 명시적으로 주지만 RUN_SCHEDULER 는 없다.
+        #   플래그에 묶으면 TestClient 를 열 때마다 실사이트를 두드리게 된다.
+        #   프로덕션(RUN_SCHEDULER=1)에서만 켜져야 한다.
+        app.state.scheduler = loop_mod.SchedulerLoop(smoke=_scheduler_enabled())
 
         @asynccontextmanager
         async def lifespan(_app: FastAPI):
@@ -136,10 +143,21 @@ def create_app(db_path: pathlib.Path | None = None, *,
             n = c.execute("SELECT COUNT(*) c FROM meal_service").fetchone()["c"]
             c.close()
             s = app.state.scheduler
+            now = dt.datetime.now(KST)
+            from crawler import schedule as sched_mod
+            c2 = conn()
+            try:
+                fresh = sched_mod.source_freshness(
+                    c2, sched_mod.load_schedule(), now)
+            finally:
+                c2.close()
             return {
                 "ok": True, "meal_service": n,
-                "now_kst": dt.datetime.now(KST).isoformat(),
+                "now_kst": now.isoformat(),
                 "scheduler": None if s is None else s.status(),
+                # 원천별 마지막 성공. 백필이 조용히 멈춘 걸 여기서 잡는다.
+                "sources": fresh,
+                "stale_sources": [f["source_key"] for f in fresh if f["stale"]],
             }
         except Exception as e:  # noqa: BLE001
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
@@ -207,20 +225,28 @@ def handle(db_path: pathlib.Path, block_name: str, payload: dict,
     detail = (payload.get("action") or {}).get("detailParams") or {}
 
     if block_name in ("food.menu.today", "food.menu"):
-        return _handle_meal(db_path, params, detail, now=now)
+        return _handle_meal(db_path, params, detail, utterance, now=now)
     return templates.render_fallback()
 
 
 def _handle_meal(db_path: pathlib.Path, params: dict, detail: dict,
-                 *, now: dt.datetime | None = None) -> dict:
+                 utterance: str = "", *, now: dt.datetime | None = None) -> dict:
     now = now or dt.datetime.now(KST)
 
-    facility_id = _resolve_facility(params)
-    if facility_id is None:
-        return templates.render_fallback()
+    # ★ params 가 비면 발화에서 보완한다.
+    #   오픈빌더는 발화마다 태깅해야 params 를 주는데, 학생 자유 발화는
+    #   태깅이 안 되므로 params 가 계속 빈다. 인텐트 분류는 여전히 오픈빌더가 하고
+    #   우리는 **이미 매칭된 블록 안에서** 슬롯만 채운다.
+    facility_id, source = aliases.resolve_facility(params, utterance)
+    log.info("[skill] facility=%s via=%s utterance=%r",
+             facility_id or "-", source, utterance[:40])
 
     date = _resolve_date(params, detail, now)
-    meal_type = _resolve_meal_type(params, now)
+    meal_type = _resolve_meal_type(params, now, utterance)
+
+    if facility_id is None:
+        # "오늘 학식"처럼 식당을 안 말하는 발화. 폴백 대신 전체 식당을 보여준다.
+        return _handle_overview(db_path, date=date, meal_type=meal_type, now=now)
 
     # ── 3. 온톨로지 조회 + 게이트 ──
     conn = repo.connect(db_path)
@@ -244,15 +270,28 @@ def _handle_meal(db_path: pathlib.Path, params: dict, detail: dict,
         conn.close()
 
 
-def _resolve_facility(params: dict) -> str | None:
-    raw = (params.get("outlet") or params.get("facility")
-           or params.get("outlet_name") or "")
-    raw = str(raw).strip()
-    if raw in FACILITY_BY_ALIAS:
-        return FACILITY_BY_ALIAS[raw]
-    if raw in FACILITY_NAME:
-        return raw
-    return None
+def _handle_overview(db_path: pathlib.Path, *, date: str, meal_type: str,
+                     now: dt.datetime) -> dict:
+    """식당을 안 말한 발화 — 지금 운영 중인 곳을 한 장으로 보여준다.
+
+    폴백("답변할 자료가 준비되지 않았어요")으로 보내면 안 된다.
+    자료는 있고 어느 식당인지만 모르는 상태다.
+    """
+    conn = repo.connect(db_path)
+    try:
+        rows = []
+        for fid in aliases.all_facility_ids():
+            answer = branch.resolve_meal(conn, facility_id=fid, date=date,
+                                         meal_type=meal_type, now=now)
+            rows.append((fid, aliases.canonical_name(fid), answer))
+        return templates.render_overview(rows, date=date, meal_type=meal_type)
+    finally:
+        conn.close()
+
+
+def _resolve_facility(params: dict, utterance: str = "") -> str | None:
+    fid, _ = aliases.resolve_facility(params, utterance)
+    return fid
 
 
 def _resolve_date(params: dict, detail: dict, now: dt.datetime) -> str:
@@ -279,13 +318,17 @@ def _resolve_date(params: dict, detail: dict, now: dt.datetime) -> str:
     return now.date().isoformat()
 
 
-def _resolve_meal_type(params: dict, now: dt.datetime) -> str:
+def _resolve_meal_type(params: dict, now: dt.datetime, utterance: str = "") -> str:
     raw = str(params.get("meal_type") or "").strip()
     mapped = repo.MEAL_TYPE_FROM_SOURCE.get(raw)
     if mapped:
         return mapped
     if raw in ("breakfast", "lunch", "dinner"):
         return raw
+    # params 가 비면 발화에서 찾는다 (식당과 같은 이유)
+    from_utt = aliases.find_meal_type(utterance)
+    if from_utt:
+        return from_utt
     # 지정이 없으면 시각으로 정한다. 추측이 아니라 관례적 기본값이다.
     h = now.hour
     if h < 10:

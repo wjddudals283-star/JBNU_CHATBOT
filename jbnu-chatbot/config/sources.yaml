@@ -34,6 +34,42 @@ coop_week_menu:
   schedule: ["06:00", "10:30", "16:00"]
   # 인증·Referer·쿠키 불필요. 커버리지는 이번 주 월~금뿐 (실측: 다음 주 이후 전부 list:[]).
 
+  # ★ 알려진 차단 — 경보 대상에서 뺀다.
+  #   실패가 '정상 상태'인 원천을 매일 ERROR 로 올리면 경고등이 상시 켜지고,
+  #   그러면 진짜 문제가 묻힌다. 상태는 계속 기록하되 등급만 낮춘다.
+  #   감시 방향을 뒤집어, **차단이 풀리면(200) 알린다.**
+  known_blocked:
+    since: "2026-08-11"
+    observed_from: "Render (해외 IP)"
+    reason: "IP/지역 차단 유력. 헤더 변형 7종 + 일반 페이지까지 전부 403. 한국 IP 에서는 200"
+    workaround: "노트북(한국 IP)에서 주 1회 백필. docs/BACKFILL.md"
+  # 주 1회 백필이므로 8일까지는 정상으로 본다. 그 이상이면 백필이 안 도는 것이다.
+  stale_after_hours: 192
+
+jbnu_academic_schedule:
+  label: 학사일정
+  url: https://www.jbnu.ac.kr/web/academic/schedule/dataAjax.do
+  method: POST
+  params:
+    type: yearly
+  csrf:
+    page_url: https://www.jbnu.ac.kr/web/academic/schedule.do
+    meta_name: _csrf
+    header: X-CSRF-Token
+  media_type: html
+  parser: jbnu_academic_schedule
+  extraction_method: html_selector
+  confidence: 0.95
+  tier: T1
+  # 자주 안 바뀐다. 개정 감시 목적이라 주 1회로 충분하다.
+  schedule: ["05:30"]
+  weekly_on: 0          # 월요일
+  stale_after_hours: 192
+  # ★ acYear/acSemester 로 과거·미래 조회가 된다 → 백필 가능.
+  #   학교 식단 XHR 은 이번 주 고정이라 백필이 안 됐다. 이건 사고가 나도 복구된다.
+  # 현재 학년도 앞뒤로 (연도, 학기) 조합을 함께 긁는다.
+  variant_strategy: academic_year
+
 jbnu_cafeteria_day:
   label: 학교 식단안내 (2차 원천 + 가격·운영시간)
   url: https://www.jbnu.ac.kr/web/unvrslife/campuslife/cafeteria/dataAjax.do

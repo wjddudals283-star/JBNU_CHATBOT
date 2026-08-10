@@ -155,18 +155,37 @@ def test_스모크는_하루_한_번만_돈다(tmp_path, monkeypatch):
     assert len(calls) == 2, "날이 바뀌면 다시 돈다"
 
 
-def test_스모크_실패는_ERROR로_로그된다(tmp_path, monkeypatch, caplog):
+def test_경보가_있으면_WARNING으로_올린다(tmp_path, monkeypatch, caplog):
+    """알려진 차단은 조용하고, alerts 가 있을 때만 올린다."""
     monkeypatch.setattr(run_mod, "DB_PATH", tmp_path / "m.db")
     monkeypatch.setattr(run_mod, "SNAPSHOT_DIR", tmp_path / "snap")
     monkeypatch.setattr(run_mod, "main", lambda argv: 0)
     monkeypatch.setattr(smoke_mod, "run", lambda *a, **k: {
-        "at": "x", "verdict": "사이트 전체 차단 — IP/지역 차단 유력",
-        "coop_passing_variants": []})
+        "at": "x", "verdict": "차단 해제", "coop_passing_variants": ["coop/bare"],
+        "alerts": [{"tag": "BLOCK-LIFTED", "source_key": "coop_week_menu",
+                    "kind": "block_lifted", "message": "풀렸다"}]})
 
     lp = loop_mod.SchedulerLoop(smoke=True)
     with caplog.at_level("INFO", logger="jbnu.scheduler"):
         lp.tick(dt.datetime(2026, 8, 11, 9, 0, tzinfo=KST))
-    assert "[scheduler] SMOKE PROBLEM" in caplog.text
+    assert "[scheduler] SMOKE alerts=" in caplog.text
+    assert "BLOCK-LIFTED:coop_week_menu" in caplog.text
+
+
+def test_알려진_차단이면_조용하다(tmp_path, monkeypatch, caplog):
+    """★ 매일 ERROR 를 뱉으면 경고등이 상시 켜지고 진짜 문제가 묻힌다."""
+    monkeypatch.setattr(run_mod, "DB_PATH", tmp_path / "q.db")
+    monkeypatch.setattr(run_mod, "SNAPSHOT_DIR", tmp_path / "snap")
+    monkeypatch.setattr(run_mod, "main", lambda argv: 0)
+    monkeypatch.setattr(smoke_mod, "run", lambda *a, **k: {
+        "at": "x", "verdict": "사이트 전체 차단", "coop_passing_variants": [],
+        "alerts": []})
+
+    lp = loop_mod.SchedulerLoop(smoke=True)
+    with caplog.at_level("INFO", logger="jbnu.scheduler"):
+        lp.tick(dt.datetime(2026, 8, 11, 9, 0, tzinfo=KST))
+    assert "[scheduler] SMOKE ok" in caplog.text
+    assert not any(r.levelname in ("WARNING", "ERROR") for r in caplog.records)
 
 
 def test_스모크가_터져도_틱이_안_죽는다(tmp_path, monkeypatch, caplog):

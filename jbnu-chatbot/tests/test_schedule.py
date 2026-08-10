@@ -100,7 +100,8 @@ def test_창을_놓치면_그날_안에_따라잡는다(hconn):
 def test_오늘_이미_성공했으면_따라잡지_않는다(hconn):
     srcs = sched.load_schedule()
     at_9 = dt.datetime(2026, 8, 10, 9, 0, tzinfo=KST)
-    for key in ("coop_week_menu", "likehome_week_menu", "jbnu_cafeteria_day"):
+    # ★ 하드코딩하지 않는다. 원천이 늘 때마다 테스트가 깨진다(실제로 깨졌다).
+    for key in sched.load_schedule():
         repo.start_crawl(hconn, run_id=f"ok-{key}", source_key=key,
                          started_at="2026-08-10T07:00:00+09:00")
         repo.finish_crawl(hconn, f"ok-{key}", outcome="success",
@@ -154,7 +155,8 @@ def test_기록이_아예_없으면_경보(hconn):
 def test_최근_성공이_있으면_경보_없음(hconn):
     srcs = sched.load_schedule()
     now = dt.datetime(2026, 8, 10, 12, 0, tzinfo=KST)
-    for key in ("coop_week_menu", "likehome_week_menu", "jbnu_cafeteria_day"):
+    # ★ 하드코딩하지 않는다. 원천이 늘 때마다 테스트가 깨진다(실제로 깨졌다).
+    for key in sched.load_schedule():
         repo.start_crawl(hconn, run_id=f"r-{key}", source_key=key,
                          started_at="2026-08-10T06:00:00+09:00")
         repo.finish_crawl(hconn, f"r-{key}", outcome="success",
@@ -177,16 +179,31 @@ def test_실패만_있으면_경보(hconn):
 
 
 def test_25시간_지나면_경보(hconn):
+    """기본 임계 24시간. 생협은 백필 주기 때문에 192시간이라 여기 안 쓴다."""
     srcs = sched.load_schedule()
-    repo.start_crawl(hconn, run_id="old", source_key="coop_week_menu",
+    assert not srcs["jbnu_cafeteria_day"].get("stale_after_hours"), "기본 임계 소스"
+    repo.start_crawl(hconn, run_id="old", source_key="jbnu_cafeteria_day",
                      started_at="2026-08-09T06:00:00+09:00")
     repo.finish_crawl(hconn, "old", outcome="success",
                       finished_at="2026-08-09T06:00:05+09:00")
     hconn.commit()
     now = dt.datetime(2026, 8, 10, 12, 0, tzinfo=KST)   # 30시간 후
     a = next(x for x in sched.heartbeat(hconn, srcs, now)
-             if x["source_key"] == "coop_week_menu")
+             if x["source_key"] == "jbnu_cafeteria_day")
     assert a["age_hours"] > 24
+
+
+def test_생협은_같은_경과시간에도_경보가_아니다(hconn):
+    """★ 주 1회 백필이라 30시간은 정상이다. 24시간 기준이면 매일 경보가 뜬다."""
+    srcs = sched.load_schedule()
+    repo.start_crawl(hconn, run_id="c", source_key="coop_week_menu",
+                     started_at="2026-08-09T06:00:00+09:00")
+    repo.finish_crawl(hconn, "c", outcome="success",
+                      finished_at="2026-08-09T06:00:05+09:00")
+    hconn.commit()
+    now = dt.datetime(2026, 8, 10, 12, 0, tzinfo=KST)
+    assert not any(x["source_key"] == "coop_week_menu"
+                   for x in sched.heartbeat(hconn, srcs, now))
 
 
 # ═══════════════════════════════════════════════════════════════
