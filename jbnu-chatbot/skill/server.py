@@ -21,6 +21,7 @@ import json
 import logging
 import os
 import pathlib
+import re
 import sqlite3
 from typing import Any
 
@@ -226,7 +227,51 @@ def handle(db_path: pathlib.Path, block_name: str, payload: dict,
 
     if block_name in ("food.menu.today", "food.menu"):
         return _handle_meal(db_path, params, detail, utterance, now=now)
+    if block_name in ("deadline.upcoming", "calendar.upcoming", "calendar.date"):
+        return _handle_upcoming(db_path, params, detail, utterance, now=now)
     return templates.render_fallback()
+
+
+SCHEDULE_URL = "https://www.jbnu.ac.kr/web/academic/schedule.do"
+UPCOMING_DEFAULT_DAYS = 14
+
+
+def _handle_upcoming(db_path: pathlib.Path, params: dict, detail: dict,
+                     utterance: str = "", *,
+                     now: dt.datetime | None = None) -> dict:
+    now = now or dt.datetime.now(KST)
+    today = now.date().isoformat()
+    days = _resolve_days(params, utterance)
+    until = (now.date() + dt.timedelta(days=days)).isoformat()
+
+    conn = repo.connect(db_path)
+    try:
+        rows = repo.query_calendar(conn, since=today, until=until)
+        # 신선도 — 학사일정은 자주 안 바뀌지만 크롤이 멈춘 걸 숨기면 안 된다.
+        observed = max((r["observed_at"] for r in rows), default=None)
+        stale = bool(rows) and repo.staleness_hours(observed, now) > \
+            repo.MAX_STALENESS_HOURS["academic_calendar"]
+        log.info("[skill] upcoming days=%s rows=%s stale=%s", days, len(rows), stale)
+        return templates.render_upcoming(
+            rows, today=today, days=days, source_url=SCHEDULE_URL,
+            observed_at=observed, stale=stale)
+    finally:
+        conn.close()
+
+
+_DAYS_RE = re.compile(r"(\d+)\s*일")
+
+
+def _resolve_days(params: dict, utterance: str) -> int:
+    raw = str(params.get("days") or "").strip()
+    if raw.isdigit():
+        return max(1, min(int(raw), 90))
+    m = _DAYS_RE.search(utterance or "")
+    if m:
+        return max(1, min(int(m.group(1)), 90))
+    if "이번 달" in (utterance or "") or "이번달" in (utterance or ""):
+        return 31
+    return UPCOMING_DEFAULT_DAYS
 
 
 def _handle_meal(db_path: pathlib.Path, params: dict, detail: dict,

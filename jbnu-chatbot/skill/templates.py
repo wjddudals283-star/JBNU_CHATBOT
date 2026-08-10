@@ -204,8 +204,20 @@ def _render_b(answer: MealAnswer, *, facility_name: str, dl: str, meal_ko: str,
         if why:
             why = why.strip().strip("[]")
         detail = "" if (not why or why in CLOSED_MARKER_WORDS) else f" ({why})"
-        text = (f"{facility_name}은 {dl} {meal_ko}에 운영하지 않아요{detail}.\n\n"
-                f"{observed_label(answer.observed_at)} 기준이에요.")
+        lines = [f"{facility_name}은 {dl} {meal_ko}에 운영하지 않아요{detail}."]
+
+        # ★ 근거를 보여준다. 물어본 끼니는 닫혔으니 **언제 여는지**를 보여주는 게
+        #   학생의 다음 질문이다. 여기에 근거가 빠져 있었다 — 합의한 문안과 달랐다.
+        #   운영시간 관측이 없으면(serves=None) 억지로 만들지 않고 관측 시각만 남긴다.
+        summary = hours_summary(answer.hours)
+        if summary:
+            lines += ["", f"운영시간은 {summary}이에요."]
+            stamp = observed_label(answer.hours[0]["observed_at"])
+            if stamp:
+                lines[-1] += f" ({stamp})"
+        else:
+            lines += ["", f"{observed_label(answer.observed_at)} 기준이에요."]
+        text = "\n".join(lines)
     return kakao.response(
         [kakao.simple_text(text)],
         [kakao.quick_reply("다른 끼니", f"{facility_name} 오늘 메뉴"),
@@ -286,6 +298,69 @@ def render_overview(rows, *, date: str, meal_type: str) -> dict:
     qr = [kakao.quick_reply(f"{n} 자세히", f"{n} {meal_ko}") for n in operating[:3]]
     qr.append(kakao.quick_reply("내일 학식", f"내일 {meal_ko}"))
     return kakao.response([card], qr)
+
+
+def render_upcoming(rows, *, today: str, days: int, source_url: str,
+                    observed_at: str | None = None, stale: bool = False) -> dict:
+    """다가오는 학사일정 (deadline.upcoming).
+
+    ★ 진행 중인 기간도 보여준다. 9/3에 물으면 9/1~9/7 수강신청 변경 기간은
+      이미 시작했지만 **아직 늦지 않았다.** 시작했다고 빼면 놓치게 만든다.
+    """
+    if stale:
+        return kakao.response(
+            [kakao.simple_text(
+                "학사일정을 확인하지 못했어요.\n"
+                "마지막 확인이 오래돼서 지금 자료로 쓰기 어려워요.\n\n"
+                f"원문에서 직접 확인해 주세요.\n{source_url}")],
+            [kakao.quick_reply("오늘 학식"), kakao.quick_reply("처음으로")])
+
+    if not rows:
+        return kakao.response(
+            [kakao.simple_text(
+                f"앞으로 {days}일 안에 예정된 학사일정이 없어요.\n\n"
+                f"전체 일정은 학사일정 페이지에서 볼 수 있어요.\n{source_url}")],
+            [kakao.quick_reply("이번 학기 전체", "학사일정 전체"),
+             kakao.quick_reply("처음으로")])
+
+    d0 = dt.date.fromisoformat(today)
+    items = []
+    for r in rows:
+        start = dt.date.fromisoformat(r["start_date"])
+        end = dt.date.fromisoformat(r["end_date"]) if r["end_date"] else None
+        items.append({"title": r["title"],
+                      "description": _dday(d0, start, end)})
+
+    overflow = (kakao.web_button(f"전체 {len(items)}건", source_url)
+                if len(items) > kakao.MAX_LIST_ITEMS else None)
+    card, _ = kakao.list_card(
+        f"앞으로 {days}일 학사일정", items,
+        buttons=None if overflow else [kakao.web_button("학사일정 보기", source_url)],
+        overflow_button=overflow)
+
+    outputs = [card]
+    if observed_at:
+        outputs.append(kakao.simple_text(f"{observed_label(observed_at)} 기준"))
+    return kakao.response(outputs, [
+        kakao.quick_reply("이번 달 전체", "이번 달 학사일정"),
+        kakao.quick_reply("오늘 학식"),
+    ])
+
+
+def _dday(today: dt.date, start: dt.date, end: dt.date | None) -> str:
+    """D-day 표기. 진행 중이면 '마감까지'를 보여준다 — 그게 학생이 쓸 정보다."""
+    if end and start <= today <= end:
+        left = (end - today).days
+        return "오늘 마감" if left == 0 else f"진행 중 · {left}일 남음"
+    delta = (start - today).days
+    when = f"{start.month}/{start.day}"
+    if end:
+        when += f"~{end.month}/{end.day}"
+    if delta == 0:
+        return f"오늘 · {when}"
+    if delta == 1:
+        return f"내일 · {when}"
+    return f"D-{delta} · {when}"
 
 
 def render_fallback() -> dict:

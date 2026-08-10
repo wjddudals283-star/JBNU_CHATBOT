@@ -34,6 +34,8 @@ MAX_STALENESS_HOURS: dict[str, float] = {
     "pledge_progress": 30 * 24,
     "operating_hours": 30 * 24,
     "menu_price": 30 * 24,
+    # 학사일정은 자주 안 바뀌지만, 크롤이 멈춘 걸 숨기면 안 된다.
+    "academic_calendar": 30 * 24,
     "procedure": 180 * 24,
     "contact": 180 * 24,
     "place": 180 * 24,
