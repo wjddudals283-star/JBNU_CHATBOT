@@ -1,0 +1,59 @@
+# 원천 정의. URL·주기·파서·티어를 코드 밖에 둔다.
+
+likehome_week_menu:
+  label: 생활관 주간식단
+  url: https://likehome.jbnu.ac.kr/home/main/inner.php
+  params:
+    sMenu: B7100
+  # date 를 주면 그 주 일요일로 302 리다이렉트된다. 생략하면 이번 주.
+  date_param: date
+  media_type: html
+  parser: likehome_week_menu
+  extraction_method: html_selector
+  confidence: 0.95
+  tier: T1
+  facility_id: "jbnu:facility/생활관-식당"
+  facility_name: 생활관 식당
+  source_type: dorm
+  schedule: ["06:00", "16:00"]
+  # 원천 커버리지: 요청 주 1주. 과거·미래 모두 date 파라미터로 조회 가능.
+
+coop_week_menu:
+  label: 생협 주간식단 (1차 원천)
+  url: https://coopjbnu.kr/function/get_cafeteria_menu.php
+  method: POST
+  # ★ now 를 생략하면 그 주 월~금 15건이 한 번에 온다. now=Y 면 하루치만.
+  params: {}
+  date_param: date
+  date_format: "%Y%m%d"
+  media_type: json
+  parser: coop_week_menu
+  extraction_method: json_api
+  confidence: 0.95
+  tier: T1
+  schedule: ["06:00", "10:30", "16:00"]
+  # 인증·Referer·쿠키 불필요. 커버리지는 이번 주 월~금뿐 (실측: 다음 주 이후 전부 list:[]).
+
+jbnu_cafeteria_day:
+  label: 학교 식단안내 (2차 원천 + 가격·운영시간)
+  url: https://www.jbnu.ac.kr/web/unvrslife/campuslife/cafeteria/dataAjax.do
+  method: POST
+  params:
+    type: day
+  # ★ CSRF: cafeteria.do 를 먼저 GET → <meta name="_csrf"> → 같은 세션으로 POST
+  csrf:
+    page_url: https://www.jbnu.ac.kr/web/unvrslife/campuslife/cafeteria.do
+    meta_name: _csrf
+    header: X-CSRF-Token
+  media_type: html
+  parser: jbnu_cafeteria_day
+  extraction_method: html_selector
+  confidence: 0.95
+  tier: T1
+  # ★ 매일 돈다. 이 원천만 운영시간을 갖고 있고,
+  #   개강(2026-09-01) 전후 시간표 변화를 관측해야 term='unspecified' 를
+  #   추론이 아니라 관측으로 해소할 수 있다. 이 창을 놓치면 다음 학기 경계까지 기다린다.
+  #   관측 이력은 valid_from 별로 보존되고, 질의는 해당 날짜에 적용되는 한 벌만 쓴다.
+  schedule: ["07:00"]
+  hours_source: true
+  # date 파라미터 없음 → 이번 주 고정. 기준 원천이 될 수 없어 2차로 둔다.

@@ -1,0 +1,114 @@
+# D11 안전 분기 연락처·키워드.
+#
+# ★ 이 파일은 자동 갱신 대상이 아니다. 사람이 관리한다.
+#
+# ═══════════════════════════════════════════════════════════════
+# 배포 차단 조건 (01_설계.md §7)
+#
+#   한 항목이 '확인됨'이 되려면 셋이 다 있어야 한다.
+#       verified: true
+#       verified_at: YYYY-MM-DD     확인한 날짜
+#       verified_by: 직책            확인한 사람
+#
+#   ★ verified_by 에는 **직책만** 쓴다 (예: 사무국장, 복지국장).
+#     이 저장소는 Public 이고, 한 번 커밋된 값은 지워도 히스토리에 남는다.
+#     책임 소재는 직책으로 충분히 특정된다.
+#
+#   하나라도 빠지면 그 항목은 미확인이고, 미확인이 하나라도 있으면
+#   **안전 분기 전체가 차단**된다(전부 아니면 전무). 그 상태에서는 상담 창구를
+#   나열하지 않고 "총학에 직접 문의" 한 줄만 내보낸다.
+#
+#   verified: true 인데 verified_at/verified_by 가 없으면 **예외를 던진다.**
+#   조용히 미확인으로 강등하지 않는다 — 절반만 채운 항목은 누군가 확인을
+#   시작했다가 멈춘 흔적이고, 그 상태로 배포되는 게 가장 위험하다.
+#   T4 레코드에 author/approved_by 를 강제한 것과 같은 이유다.
+#
+# ─────────────────────────────────────────────────────────────
+# ⚠️ 현재 상태: 5건 전부 미확인 → 배포 차단 중
+#
+#   아래 phone 값은 **웹 검색 결과**이며 근거로 부족하다.
+#   총학이 각 기관에 **직접 전화해서** 받은 번호로 교체하고,
+#   그때 verified_at / verified_by 를 같이 채운다.
+#   웹 값이 맞더라도 "확인 통화를 했다"는 사실 자체가 근거다.
+#
+#   확인할 목록:  python -c "from skill import safety; \
+#                   [print(x) for x in safety.load().verification_worksheet()]"
+# ═══════════════════════════════════════════════════════════════
+
+unverified_fallback: |
+  이 내용은 총학생회가 직접 도와드려야 하는 사안이에요.
+  아래로 연락 주시면 담당자가 바로 안내해 드릴게요.
+
+  전북대학교 총학생회 → (총학 연락처/채널 링크)
+
+  지금 위험한 상황이면 112, 응급상황이면 119로 먼저 연락해 주세요.
+
+priority: [emergency, violence, harassment, mental_health]
+
+footer: "지금 위험한 상황이면 112, 응급상황이면 119로 먼저 연락해 주세요."
+
+categories:
+  emergency:
+    keywords: [죽고싶, 자살, 자해, 살고싶지않, 죽을것같, 극단적선택]
+    lead: |
+      많이 힘드셨겠어요. 혼자 감당하지 않으셔도 됩니다.
+      지금 바로 이야기 나눌 수 있는 곳으로 연결해 드릴게요.
+    contacts:
+      - label: "자살예방상담전화 (24시간)"
+        phone: "109"           # 웹: 2024년 1393 등 8개 상담전화가 통합
+        verified: false
+        verified_at: ""
+        verified_by: ""
+      - label: "전북대 행복드림센터"
+        phone: "063-219-5301"  # 웹: 진수당 1층
+        note: "진수당 1층"
+        verified: false
+        verified_at: ""
+        verified_by: ""
+
+  violence:
+    keywords: [성폭력, 성추행, 성희롱, 강제추행, 데이트폭력, 스토킹, 폭행, 협박, 몰카, 불법촬영]
+    lead: |
+      말씀해 주셔서 고맙습니다. 혼자 감당하지 않으셔도 돼요.
+      전문 상담 창구로 바로 연결해 드릴게요.
+    contacts:
+      - label: "여성긴급전화 (24시간)"
+        phone: "1366"
+        verified: false
+        verified_at: ""
+        verified_by: ""
+      - label: "전북대 인권센터"
+        phone: "063-270-3025"  # 웹: 진수당 154호
+        note: "진수당 154호"
+        verified: false
+        verified_at: ""
+        verified_by: ""
+
+  harassment:
+    keywords: [괴롭힘, 괴롭혀, 따돌림, 왕따, 갑질, 인권침해, 차별당, 폭언]
+    lead: |
+      혼자 참지 않으셔도 됩니다. 상담 창구를 안내해 드릴게요.
+    contacts:
+      - label: "전북대 인권센터"
+        phone: "063-270-3025"
+        note: "진수당 154호"
+        verified: false
+        verified_at: ""
+        verified_by: ""
+      - label: "국가인권위원회"
+        phone: "1331"
+        verified: false
+        verified_at: ""
+        verified_by: ""
+
+  mental_health:
+    keywords: [우울해, 우울증, 불안해, 공황, 힘들어죽]
+    lead: |
+      요즘 많이 지치셨나 봐요. 상담받을 수 있는 곳을 알려드릴게요.
+    contacts:
+      - label: "전북대 행복드림센터"
+        phone: "063-219-5301"
+        note: "진수당 1층"
+        verified: false
+        verified_at: ""
+        verified_by: ""

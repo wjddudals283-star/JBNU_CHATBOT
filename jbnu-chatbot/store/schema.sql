@@ -1,0 +1,383 @@
+-- 전북대 총학 챗봇 — DB 스키마 (1단계)
+-- 계약: 02_클로드코드_핸드오프.md §2
+--
+-- 계약 대비 추가분 (필드 추가만. 불변 규칙·티어 배정 무변경)
+--   a) 모든 fact 테이블에 CHECK 제약으로 enum 을 강제 (주석에만 있던 것을 실제 제약으로)
+--   b) 모든 fact 테이블에 CHECK (tier <> 'T4' OR valid_to IS NOT NULL)
+--      — "T4 는 valid_to NOT NULL" 불변 규칙을 pledge_progress 밖에서도 강제
+--   c) source_type 에 'dorm' 추가 (생활관). 답변 제외는 'thirdparty' 만 유지
+--   d) operating_hours 에 meal_type 추가
+--      — §4 B분기 판정표가 serves_meal(facility, date, meal_type) 를 요구한다.
+--        실데이터도 끼니별이다(진수원 점심 11:30~14:00 / 석식 17:30~19:00).
+--        이 컬럼이 없으면 "진수원은 아침을 운영하지 않아요"(B)를 만들 수 없다.
+--
+-- ★ SQLite 는 외래키가 기본 OFF 다. 반드시 연결마다 PRAGMA foreign_keys = ON.
+--   repo.connect() 가 이를 강제한다.
+
+PRAGMA foreign_keys = ON;
+
+
+-- ═══════════════════════════════════════════════════════════════
+-- Source Layer
+-- ═══════════════════════════════════════════════════════════════
+
+CREATE TABLE IF NOT EXISTS source_snapshot (
+  id            TEXT PRIMARY KEY,
+  source_key    TEXT NOT NULL,
+  url           TEXT NOT NULL,
+  fetched_at    TEXT NOT NULL,
+  http_status   INTEGER,
+  content_hash  TEXT NOT NULL,          -- 원문 바이트 해시. 감사 추적용
+  -- 캐시버스터·CSRF 토큰 등 매 요청 변하는 부분을 지운 뒤의 해시.
+  -- ★ 변경 감지는 이걸로 한다. 원문 해시로 하면 likehome 처럼
+  --   ?ver=<유닉스타임> 을 붙이는 사이트에서 'unchanged' 가 영영 성립하지 않는다.
+  stable_hash   TEXT NOT NULL DEFAULT '',
+  content_path  TEXT NOT NULL,
+  media_type    TEXT NOT NULL
+                CHECK (media_type IN ('html','image','json','pdf'))
+);
+
+
+-- ═══════════════════════════════════════════════════════════════
+-- 마스터 (출처 메타 없음 — 사실이 아니라 식별자다)
+-- ═══════════════════════════════════════════════════════════════
+
+CREATE TABLE IF NOT EXISTS organization (
+  id            TEXT PRIMARY KEY,
+  name          TEXT NOT NULL,
+  aliases       TEXT,
+  type          TEXT NOT NULL
+                CHECK (type IN ('총학생회','단과대학생회','생협','생활관',
+                                '본부부서','동아리연합회')),
+  parent_org_id TEXT REFERENCES organization(id),
+  official_url  TEXT,
+  contact_id    TEXT
+);
+
+CREATE TABLE IF NOT EXISTS place (
+  id       TEXT PRIMARY KEY,
+  name     TEXT NOT NULL,
+  aliases  TEXT,
+  campus   TEXT, building TEXT, floor TEXT,
+  lat      REAL, lng REAL,
+  entrance_note TEXT
+);
+
+CREATE TABLE IF NOT EXISTS facility (
+  id            TEXT PRIMARY KEY,
+  name          TEXT NOT NULL,
+  aliases       TEXT,
+  place_id      TEXT REFERENCES place(id),
+  operated_by   TEXT REFERENCES organization(id),
+  facility_type TEXT NOT NULL
+                CHECK (facility_type IN ('열람실','강의실','체육시설','식당',
+                                         '카페','매점','사무실')),
+  capacity             INTEGER,
+  reservation_required INTEGER NOT NULL DEFAULT 0,
+  reservation_url      TEXT,
+  source_url    TEXT NOT NULL,
+  -- 'dorm' 추가. 답변에서 제외되는 것은 'thirdparty' 뿐이다.
+  source_type   TEXT NOT NULL
+                CHECK (source_type IN ('official','coop','council','dorm','thirdparty')),
+  -- ★ 운영시간표를 통째로 수집했는가. 폐쇄세계 가정을 명시적으로 만든다.
+  --   complete: 행이 없으면 = 미운영 (부정 결론을 내려도 된다)
+  --   partial : 행이 없으면 = 모름(None). 아직 안 긁은 것과 구분이 안 된다
+  --   기본값은 partial. complete 는 시간표 전체를 파싱한 크롤러만 세울 수 있다.
+  hours_coverage TEXT NOT NULL DEFAULT 'partial'
+                 CHECK (hours_coverage IN ('complete','partial'))
+);
+
+
+-- ═══════════════════════════════════════════════════════════════
+-- Fact Layer
+--   공통 출처 메타 8개는 모든 fact 테이블에 동일하게 들어간다.
+--   source_id / source_url / observed_at / confidence / extraction_method / tier
+--   = NOT NULL (불변 규칙). valid_from 도 NOT NULL.
+-- ═══════════════════════════════════════════════════════════════
+
+CREATE TABLE IF NOT EXISTS operating_hours (
+  id          TEXT PRIMARY KEY,
+  facility_id TEXT NOT NULL REFERENCES facility(id),
+  -- ★ 원천이 학기를 안 밝히면 'unspecified'. 미상을 미상으로 적는다.
+  --   '학기중'으로 좁히거나 전 학기 적용으로 넓히는 건 둘 다 원천이 말하지 않은 걸 채우는 것이다.
+  term        TEXT NOT NULL
+              CHECK (term IN ('학기중','방학','시험기간','공휴일','unspecified')),
+  weekday     INTEGER NOT NULL CHECK (weekday BETWEEN 0 AND 7),  -- 0=일 .. 6=토, 7=공휴일
+  -- 어느 끼니의 운영시간인가. 빈 문자열이면 시설 전체.
+  -- ★ 이 값이 있어야 "진수원은 아침을 운영하지 않아요"(B분기)를 답변 시점에 판정할 수 있다.
+  meal_type   TEXT NOT NULL DEFAULT ''
+              CHECK (meal_type IN ('','breakfast','lunch','dinner')),
+  -- ★ 원천이 **명시한** 미운영("주말·공휴일 미운영")을 행으로 남긴다.
+  --   행의 부재로 미운영을 추론하지 않기 위해서다. 명시된 부정은 관측이다.
+  is_closed   INTEGER NOT NULL DEFAULT 0 CHECK (is_closed IN (0,1)),
+  open_time   TEXT, close_time TEXT, break_start TEXT, break_end TEXT, note TEXT,
+
+  source_id         TEXT NOT NULL REFERENCES source_snapshot(id),
+  source_url        TEXT NOT NULL,
+  observed_at       TEXT NOT NULL,
+  valid_from        TEXT NOT NULL,
+  valid_to          TEXT,
+  confidence        REAL NOT NULL CHECK (confidence >= 0 AND confidence <= 1),
+  extraction_method TEXT NOT NULL
+                    CHECK (extraction_method IN ('html_selector','json_api',
+                                                 'pdf_parse','vlm_ocr','manual_admin')),
+  status            TEXT NOT NULL DEFAULT 'verified'
+                    CHECK (status IN ('verified','quarantine','needs_review',
+                                      'superseded','expired','conflict')),
+  tier              TEXT NOT NULL CHECK (tier IN ('T1','T2','T3','T4')),
+  CHECK (tier <> 'T4' OR valid_to IS NOT NULL),
+  -- 여는 행이면 시각이 있어야 하고, 시각이 없으면 명시적 미운영 행이어야 한다.
+  CHECK (is_closed = 1 OR open_time IS NOT NULL),
+  UNIQUE(facility_id, term, weekday, meal_type, valid_from)
+);
+
+CREATE TABLE IF NOT EXISTS meal_service (
+  id             TEXT PRIMARY KEY,
+  facility_id    TEXT NOT NULL REFERENCES facility(id),
+  date           TEXT NOT NULL,
+  meal_type      TEXT NOT NULL
+                 CHECK (meal_type IN ('breakfast','lunch','dinner')),
+  -- ★ closed_vacation / closed_holiday 폐기.
+  --   빈 칸은 관측값이 아니라 관측의 부재다 → unknown.
+  --   "방학이라 쉰다"는 판단은 저장하지 않는다. 답변 시점에 operating_hours 와 조인한다.
+  service_status TEXT NOT NULL
+                 CHECK (service_status IN ('operating','closed_temporary','unknown')),
+  -- ★ NULL 금지. NULL 이면 SQLite·Postgres 모두 UNIQUE 가 무력화돼
+  --   매 크롤마다 같은 조합이 중복 삽입된다 (T17).
+  --   가상의 위험이 아니다 — 의대식당 조식은 원천이 cate2='' cate3='' 를 준다.
+  zone           TEXT NOT NULL DEFAULT '',
+  corner         TEXT NOT NULL DEFAULT '',
+  -- ★ 분할 전 원본 셀 텍스트. 품목 구분자('/'·줄바꿈)에 모호함이 있어
+  --   나중에 분할 규칙을 바꿔도 **재크롤 없이** 다시 쪼갤 수 있게 남긴다.
+  --   stable_hash 에서 "저장은 원문 그대로"라고 한 것과 같은 이유다.
+  raw_text       TEXT,
+  -- ★ price_default 삭제. 날짜 키 테이블에 가격을 두지 않는다.
+  note           TEXT,
+
+  source_id         TEXT NOT NULL REFERENCES source_snapshot(id),
+  source_url        TEXT NOT NULL,
+  observed_at       TEXT NOT NULL,
+  valid_from        TEXT NOT NULL,
+  valid_to          TEXT,
+  confidence        REAL NOT NULL CHECK (confidence >= 0 AND confidence <= 1),
+  extraction_method TEXT NOT NULL
+                    CHECK (extraction_method IN ('html_selector','json_api',
+                                                 'pdf_parse','vlm_ocr','manual_admin')),
+  status            TEXT NOT NULL DEFAULT 'verified'
+                    CHECK (status IN ('verified','quarantine','needs_review',
+                                      'superseded','expired','conflict')),
+  tier              TEXT NOT NULL CHECK (tier IN ('T1','T2','T3','T4')),
+  CHECK (tier <> 'T4' OR valid_to IS NOT NULL),
+  UNIQUE(facility_id, date, meal_type, zone, corner)
+);
+
+CREATE TABLE IF NOT EXISTS menu_item (
+  id              TEXT PRIMARY KEY,
+  meal_service_id TEXT NOT NULL REFERENCES meal_service(id) ON DELETE CASCADE,
+  name            TEXT NOT NULL,
+  name_normalized TEXT NOT NULL,
+  -- ★ price 컬럼 없음. 가격은 날짜에 붙어 있지 않다 → menu_price.
+  category        TEXT,
+  allergens       TEXT,
+  is_vegetarian   INTEGER NOT NULL DEFAULT 0,
+  display_order   INTEGER NOT NULL DEFAULT 0,
+
+  source_id         TEXT NOT NULL REFERENCES source_snapshot(id),
+  source_url        TEXT NOT NULL,
+  observed_at       TEXT NOT NULL,
+  confidence        REAL NOT NULL CHECK (confidence >= 0 AND confidence <= 1),
+  extraction_method TEXT NOT NULL
+                    CHECK (extraction_method IN ('html_selector','json_api',
+                                                 'pdf_parse','vlm_ocr','manual_admin')),
+  status            TEXT NOT NULL DEFAULT 'verified'
+                    CHECK (status IN ('verified','quarantine','needs_review',
+                                      'superseded','expired','conflict')),
+  tier              TEXT NOT NULL CHECK (tier IN ('T1','T2','T3','T4')),
+  UNIQUE(meal_service_id, display_order)
+);
+
+CREATE TABLE IF NOT EXISTS menu_price (
+  id              TEXT PRIMARY KEY,
+  facility_id     TEXT NOT NULL REFERENCES facility(id),
+  name            TEXT NOT NULL,
+  -- 조인 키. 정규화 규칙은 menu_item.name_normalized 와 반드시 동일해야 한다.
+  -- 정확 일치만 조인한다 (유사도·부분일치 금지). 미매칭은 NULL.
+  name_normalized TEXT NOT NULL,
+  category        TEXT,     -- 단가표 '분류' (한식|양식|분식|포크프리존)
+  corner          TEXT,     -- 단가표 '코너'
+  -- ★ 답변은 price_text 를 그대로 렌더한다. 범위를 하한 단일값으로 접지 않는다.
+  --   6,000~6,500원짜리를 "6,000원"이라 답하면 학생이 6,000원 들고 갔다가 모자란다.
+  --   가격을 낮게 말하는 건 높게 말하는 것보다 나쁘다.
+  price_text      TEXT NOT NULL,      -- 원문 표기 그대로. "6,000원 - 6,500원", "6,000원 부터"
+  price_min       INTEGER NOT NULL,   -- 검증·정렬 전용
+  price_max       INTEGER,            -- 범위면 상한, 단일가면 min 과 동일, '부터'면 NULL
+  -- ★ audience 를 UNIQUE 에 넣지 않으면 "구성원 7,000 / 외부인 8,500" 에서 한쪽이 덮어쓴다.
+  --   외부인 행이 이기면 학생 전원에게 8,500원을 안내하게 된다. 실제 오답 경로다.
+  audience        TEXT NOT NULL DEFAULT '전체'
+                  CHECK (audience IN ('전체','구성원','외부인')),
+  note            TEXT,     -- '곱빼기(+)500', '천원의 아침밥 이벤트시 1,000원'
+  currency        TEXT NOT NULL DEFAULT 'KRW',
+
+  source_id         TEXT NOT NULL REFERENCES source_snapshot(id),
+  source_url        TEXT NOT NULL,
+  observed_at       TEXT NOT NULL,
+  valid_from        TEXT NOT NULL,
+  valid_to          TEXT,
+  confidence        REAL NOT NULL CHECK (confidence >= 0 AND confidence <= 1),
+  extraction_method TEXT NOT NULL
+                    CHECK (extraction_method IN ('html_selector','json_api',
+                                                 'pdf_parse','vlm_ocr','manual_admin')),
+  status            TEXT NOT NULL DEFAULT 'verified'
+                    CHECK (status IN ('verified','quarantine','needs_review',
+                                      'superseded','expired','conflict')),
+  tier              TEXT NOT NULL DEFAULT 'T2' CHECK (tier IN ('T1','T2','T3','T4')),
+  CHECK (tier <> 'T4' OR valid_to IS NOT NULL),
+  CHECK (price_max IS NULL OR price_max >= price_min),
+  CHECK (price_text <> ''),
+  UNIQUE(facility_id, name_normalized, audience, valid_from)
+);
+
+CREATE TABLE IF NOT EXISTS notice (
+  id            TEXT PRIMARY KEY,
+  issuer_org_id TEXT REFERENCES organization(id),
+  title         TEXT NOT NULL,
+  body          TEXT,
+  published_at  TEXT NOT NULL,
+  period_start  TEXT, period_end TEXT,
+  target_audience TEXT, apply_url TEXT,
+  supersedes    TEXT REFERENCES notice(id),
+
+  source_id         TEXT NOT NULL REFERENCES source_snapshot(id),
+  source_url        TEXT NOT NULL,
+  observed_at       TEXT NOT NULL,
+  confidence        REAL NOT NULL CHECK (confidence >= 0 AND confidence <= 1),
+  extraction_method TEXT NOT NULL
+                    CHECK (extraction_method IN ('html_selector','json_api',
+                                                 'pdf_parse','vlm_ocr','manual_admin')),
+  status            TEXT NOT NULL DEFAULT 'verified'
+                    CHECK (status IN ('verified','quarantine','needs_review',
+                                      'superseded','expired','conflict')),
+  tier              TEXT NOT NULL CHECK (tier IN ('T1','T2','T3','T4'))
+);
+
+
+-- ═══════════════════════════════════════════════════════════════
+-- 2단계 이후. 1단계엔 테이블만 만들어 둔다.
+-- ═══════════════════════════════════════════════════════════════
+
+CREATE TABLE IF NOT EXISTS procedure (
+  id           TEXT PRIMARY KEY,
+  title        TEXT NOT NULL,
+  aliases      TEXT,
+  owner_org_id TEXT REFERENCES organization(id),
+  domain       TEXT,
+  steps        TEXT, required_docs TEXT,   -- JSON
+  period_start TEXT, period_end TEXT,
+  eligibility  TEXT, fee TEXT, contact_id TEXT,
+
+  source_id         TEXT NOT NULL REFERENCES source_snapshot(id),
+  source_url        TEXT NOT NULL,
+  observed_at       TEXT NOT NULL,
+  valid_from        TEXT NOT NULL,
+  valid_to          TEXT,
+  confidence        REAL NOT NULL CHECK (confidence >= 0 AND confidence <= 1),
+  extraction_method TEXT NOT NULL
+                    CHECK (extraction_method IN ('html_selector','json_api',
+                                                 'pdf_parse','vlm_ocr','manual_admin')),
+  status            TEXT NOT NULL DEFAULT 'verified'
+                    CHECK (status IN ('verified','quarantine','needs_review',
+                                      'superseded','expired','conflict')),
+  tier              TEXT NOT NULL CHECK (tier IN ('T1','T2','T3','T4')),
+  CHECK (tier <> 'T4' OR valid_to IS NOT NULL)
+);
+
+CREATE TABLE IF NOT EXISTS pledge (
+  id       TEXT PRIMARY KEY,
+  term     INTEGER NOT NULL,
+  number   INTEGER NOT NULL,
+  category TEXT,
+  title    TEXT NOT NULL,
+  summary  TEXT,
+  target_date TEXT,
+  UNIQUE(term, number)
+);
+
+CREATE TABLE IF NOT EXISTS pledge_progress (
+  id            TEXT PRIMARY KEY,
+  pledge_id     TEXT NOT NULL REFERENCES pledge(id),
+  status_value  TEXT NOT NULL
+                CHECK (status_value IN ('계획','진행중','완료','보류','철회')),
+  progress_note TEXT,
+  evidence_url  TEXT,
+  -- ★ T4 필수. 만료 없는 수기 정보는 저장 불가.
+  author        TEXT NOT NULL,
+  approved_by   TEXT NOT NULL,
+
+  source_id         TEXT NOT NULL REFERENCES source_snapshot(id),
+  source_url        TEXT NOT NULL,
+  observed_at       TEXT NOT NULL,
+  valid_from        TEXT NOT NULL,
+  valid_to          TEXT NOT NULL,     -- ★ T4 는 NOT NULL
+  confidence        REAL NOT NULL CHECK (confidence >= 0 AND confidence <= 1),
+  extraction_method TEXT NOT NULL
+                    CHECK (extraction_method IN ('html_selector','json_api',
+                                                 'pdf_parse','vlm_ocr','manual_admin')),
+  status            TEXT NOT NULL DEFAULT 'verified'
+                    CHECK (status IN ('verified','quarantine','needs_review',
+                                      'superseded','expired','conflict')),
+  tier              TEXT NOT NULL DEFAULT 'T4' CHECK (tier IN ('T1','T2','T3','T4')),
+  CHECK (author <> '' AND approved_by <> '')
+);
+-- 주: 계약의 pledge_progress.status(계획|진행중|…)는 공통 출처 메타의
+--     status(verified|quarantine|…)와 이름이 충돌한다. 전자를 status_value 로 분리했다.
+
+CREATE TABLE IF NOT EXISTS alias (
+  surface_form TEXT NOT NULL,
+  canonical_id TEXT NOT NULL,
+  entity_type  TEXT NOT NULL,
+  weight       REAL NOT NULL DEFAULT 1.0,
+  PRIMARY KEY (surface_form, canonical_id)
+);
+
+
+-- ═══════════════════════════════════════════════════════════════
+-- 운영 관측 (크롤 실행 기록 + 지표)
+-- ═══════════════════════════════════════════════════════════════
+
+CREATE TABLE IF NOT EXISTS crawl_run (
+  id          TEXT PRIMARY KEY,
+  source_key  TEXT NOT NULL,
+  started_at  TEXT NOT NULL,
+  finished_at TEXT,
+  outcome     TEXT NOT NULL
+              CHECK (outcome IN ('success','unchanged','parse_error',
+                                 'fetch_error','quarantined')),
+  items_parsed      INTEGER NOT NULL DEFAULT 0,
+  items_quarantined INTEGER NOT NULL DEFAULT 0,
+  error_message     TEXT
+);
+
+-- 크롤 지표. 급변이 곧 파서 고장 신호다 (핸드오프 §2 가격 조인 규칙 / 교차 검증).
+--   price_match_rate  떨어지면 단가표·식단표 작명 규칙이 바뀐 신호
+--   conflict_rate     급등하면 1차·2차 중 한쪽 파서가 깨진 신호
+CREATE TABLE IF NOT EXISTS crawl_metric (
+  crawl_run_id TEXT NOT NULL REFERENCES crawl_run(id) ON DELETE CASCADE,
+  metric       TEXT NOT NULL
+               CHECK (metric IN ('price_match_rate','conflict_rate',
+                                 'items_parsed','anchor_check')),
+  value        REAL NOT NULL,
+  numerator    INTEGER,
+  denominator  INTEGER,
+  note         TEXT,
+  PRIMARY KEY (crawl_run_id, metric)
+);
+
+
+CREATE INDEX IF NOT EXISTS idx_meal_lookup  ON meal_service(facility_id, date, meal_type);
+CREATE INDEX IF NOT EXISTS idx_meal_status  ON meal_service(status, date);
+CREATE INDEX IF NOT EXISTS idx_menu_meal    ON menu_item(meal_service_id);
+CREATE INDEX IF NOT EXISTS idx_price_join   ON menu_price(facility_id, name_normalized);
+CREATE INDEX IF NOT EXISTS idx_hours_lookup ON operating_hours(facility_id, meal_type);
+CREATE INDEX IF NOT EXISTS idx_alias        ON alias(surface_form);
+CREATE INDEX IF NOT EXISTS idx_notice_pub   ON notice(published_at DESC);
+CREATE INDEX IF NOT EXISTS idx_crawl_source ON crawl_run(source_key, started_at DESC);

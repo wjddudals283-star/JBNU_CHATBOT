@@ -1,0 +1,39 @@
+# Render 블루프린트.
+#
+# ★ 서비스가 **하나**다. Cron Job 을 따로 두지 않는다.
+#   Render 는 Cron Job 에 디스크를 붙일 수 없고(공식 문서), 디스크는 한 서비스
+#   인스턴스에만 붙는다. SQLite 파일이 웹 서비스 디스크에 있으므로 별도 Cron Job 은
+#   그 DB 를 볼 수가 없다. 그래서 스케줄러를 웹 서비스 안에서 돌린다(RUN_SCHEDULER=1).
+#   → 서비스 1개 · 디스크 1개 · 요금 1건. 인수인계도 그만큼 단순하다.
+#
+# 3단계에서 Postgres 로 옮기면 그때 Cron Job 을 분리할 수 있다.
+
+services:
+  - type: web
+    name: jbnu-chatbot
+    runtime: python
+    plan: starter          # 정액. 사용량 과금 아님
+    region: singapore      # 한국에서 가장 가까운 리전
+    branch: main
+    # ★ render.yaml 은 저장소 루트에 있어야 Blueprint 가 읽는다.
+    #   코드는 하위 폴더에 있으므로 rootDir 로 가리킨다.
+    rootDir: jbnu-chatbot
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn skill.server:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    # ★ autoscaling 을 켜지 않는다. 켜면 정액이 아니게 되고,
+    #   인스턴스가 여럿이면 SQLite 디스크를 동시에 쓰게 돼 데이터가 깨진다.
+    numInstances: 1
+    disk:
+      name: jbnu-data
+      mountPath: /var/data
+      sizeGB: 1            # SQLite + 스냅샷. 1GB 면 수년치
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12"
+      - key: TZ
+        value: Asia/Seoul
+      - key: JBNU_DATA_DIR
+        value: /var/data
+      - key: RUN_SCHEDULER
+        value: "1"

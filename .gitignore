@@ -1,0 +1,81 @@
+# ═══════════════════════════════════════════════════════════════
+# 이 저장소는 Public 이다.
+# 한 번 커밋된 값은 지워도 히스토리에 남는다. 올리기 전에 거르는 게 유일한 방법이다.
+# ═══════════════════════════════════════════════════════════════
+
+# ── 시크릿 ──────────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+*.secret
+*.secrets
+secrets.*
+*token*.json
+*credential*
+*.pem
+*.key
+*.p12
+*.pfx
+config/local_*.yaml
+config/*.local.yaml
+# 카카오 스킬 인증 토큰(X-Skill-Token) 등은 반드시 환경변수로만 둔다
+
+# ── DB ─────────────────────────────────────────────────────────
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+*.sqlite3-journal
+
+# ── 원문 스냅샷 (용량 + 저작권) ─────────────────────────────────
+# 크롤한 원문은 우리 저작물이 아니다. 재현은 크롤러로 하면 된다.
+jbnu-chatbot/data/
+data/
+**/snapshots/
+jbnu-chatbot/docs/probe/*.html
+jbnu-chatbot/docs/probe/*.json
+
+# 단, 파서 회귀 테스트에 필요한 최소 픽스처는 남긴다
+!jbnu-chatbot/tests/fixtures/
+!jbnu-chatbot/tests/fixtures/**
+
+# ── 파이썬 ──────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# ── 가상환경 ────────────────────────────────────────────────────
+.venv/
+venv/
+env/
+ENV/
+.virtualenv/
+
+# ── 테스트·도구 ─────────────────────────────────────────────────
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+.tox/
+
+# ── 에디터·OS ───────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── 클로드코드 로컬 설정 ────────────────────────────────────────
+.claude/settings.local.json
