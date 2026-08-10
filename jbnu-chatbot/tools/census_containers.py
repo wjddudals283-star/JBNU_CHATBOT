@@ -81,14 +81,36 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--limit", type=int, default=400)
     ap.add_argument("--delay", type=float, default=0.4)
+    ap.add_argument("--host", default="www.jbnu.ac.kr",
+                    help="이 호스트만. 'others' 면 www 를 뺀 나머지 전부")
+    ap.add_argument("--out", default="container_census.json")
+    ap.add_argument("--any-status", action="store_true",
+                    help="발견만 되고 아직 안 가져온 URL(status=None)도 포함")
+    ap.add_argument("--per-host", action="store_true",
+                    help="호스트마다 1개만 — CMS 종류를 세는 데는 이걸로 충분하다")
     args = ap.parse_args(argv)
 
     doc = yaml.safe_load((ROOT / "config" / "pages.yaml").read_text(encoding="utf-8"))
+
+    def want(u: str) -> bool:
+        h = up.urlsplit(u).hostname
+        return h != "www.jbnu.ac.kr" if args.host == "others" else h == args.host
+
     urls = [p["url"] for p in doc["pages"]
-            if (up.urlsplit(p["url"]).hostname == "www.jbnu.ac.kr"
-                and p.get("status") == 200
+            if (want(p["url"])
+                and (args.any_status or p.get("status") == 200)
                 and p.get("kind") != "board_detail")]
-    urls = sorted(set(urls))[:args.limit]
+    urls = sorted(set(urls))
+    if args.per_host:
+        # 호스트마다 하나만. 경로가 있는 쪽(index.do 등)을 루트보다 먼저 고른다.
+        best: dict[str, str] = {}
+        for u in urls:
+            sp = up.urlsplit(u)
+            cur = best.get(sp.hostname)
+            if cur is None or (len(up.urlsplit(cur).path) <= 1 and len(sp.path) > 1):
+                best[sp.hostname] = u
+        urls = sorted(best.values())
+    urls = urls[:args.limit]
     print(f"대상 {len(urls)}개 · 간격 {args.delay}s\n")
 
     rows = []
@@ -132,7 +154,7 @@ def main(argv: list[str] | None = None) -> int:
     for r in [x for x in rows if x["kind"].startswith("no_sp_content")][:12]:
         print(f"    {r['title'][:26]:28} {r['path']}")
 
-    (OUT / "container_census.json").write_text(
+    (OUT / args.out).write_text(
         json.dumps(rows, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"\n저장: {OUT / 'container_census.json'}")
     return 0
