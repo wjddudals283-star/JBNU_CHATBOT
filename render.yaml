@@ -37,3 +37,9 @@ services:
         value: /var/data
       - key: RUN_SCHEDULER
         value: "1"
+      # ★ 스킬 엔드포인트 인증. Render 가 256비트 랜덤 값을 자동 생성한다.
+      #   저장소에 값이 남지 않는다. 배포 후 Dashboard → Environment 에서 읽어
+      #   카카오 오픈빌더 스킬의 커스텀 헤더(X-Skill-Token)에 넣는다.
+      #   이 값이 없으면 /skill 과 /admin 은 503 으로 닫힌다 (fail closed).
+      - key: SKILL_TOKEN
+        generateValue: true

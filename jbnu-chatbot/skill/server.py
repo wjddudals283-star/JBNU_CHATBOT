@@ -23,9 +23,9 @@ import pathlib
 import sqlite3
 from typing import Any
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 
-from skill import branch, kakao, safety, templates
+from skill import auth, branch, kakao, safety, templates
 from store import repo
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -101,6 +101,15 @@ def create_app(db_path: pathlib.Path | None = None, *,
 
     @app.get("/health")
     def health() -> dict:
+        """공개. Render 헬스체크가 부른다.
+
+        ★ 여기에는 운영 정보를 담지 않는다. 살아 있다는 사실만 알린다.
+          상세는 /admin/status (인증 필요).
+        """
+        return {"ok": True}
+
+    @app.get("/admin/status", dependencies=[Depends(auth.require_token)])
+    def status() -> dict:
         try:
             c = conn()
             n = c.execute("SELECT COUNT(*) c FROM meal_service").fetchone()["c"]
@@ -116,7 +125,8 @@ def create_app(db_path: pathlib.Path | None = None, *,
         except Exception as e:  # noqa: BLE001
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
-    @app.get("/admin/freshness")
+    # ★ 크롤 상태·소스 목록이 그대로 나가므로 반드시 인증 뒤에 둔다.
+    @app.get("/admin/freshness", dependencies=[Depends(auth.require_token)])
     def freshness() -> dict:
         c = conn()
         rows = c.execute(
@@ -143,7 +153,7 @@ def create_app(db_path: pathlib.Path | None = None, *,
         return {"sources": out,
                 "any_stale": any(x["stale"] for x in out) if out else True}
 
-    @app.post("/skill/{block_name}")
+    @app.post("/skill/{block_name}", dependencies=[Depends(auth.require_token)])
     async def skill(block_name: str, request: Request) -> dict:
         payload = await request.json()
         return handle(app.state.db_path, block_name, payload)

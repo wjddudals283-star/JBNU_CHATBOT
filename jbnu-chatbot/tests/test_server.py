@@ -66,8 +66,9 @@ def test_안전분기가_인텐트보다_먼저_동작한다(db):
                       _payload("밥도 안 넘어가고 죽고싶어", outlet="후생관"),
                       now=NOW)
     text = r["template"]["outputs"][0]["simpleText"]["text"]
-    assert "총학" in text
+    assert "109" in text, "안전 응답이어야 한다"
     assert "메뉴" not in text and "점심" not in text
+    assert "listCard" not in r["template"]["outputs"][0]
     assert "quickReplies" not in r["template"], "대화를 이어가지 않는다"
 
 
@@ -328,15 +329,19 @@ def test_운영시간_요약_포맷():
 # 하트비트
 # ═══════════════════════════════════════════════════════════════
 
-def test_freshness_엔드포인트가_stale을_알린다(db):
+def test_freshness_엔드포인트가_stale을_알린다(db, monkeypatch):
     """하트비트 — 24시간 성공 크롤이 없으면 경보. 침묵이 가장 위험하다."""
-    app = server.create_app(db)
+    from skill import auth
+    token = "freshness-token-0123456789"
+    monkeypatch.setenv(auth.TOKEN_ENV, token)
+    app = server.create_app(db, with_scheduler=False)
     from fastapi.testclient import TestClient
     client = TestClient(app)
+    hdr = {auth.HEADER_NAME: token}
 
     assert client.get("/health").json()["ok"] is True
 
-    fr = client.get("/admin/freshness").json()
+    fr = client.get("/admin/freshness", headers=hdr).json()
     by_key = {s["source_key"]: s for s in fr["sources"]}
     assert "coop_week_menu" in by_key
     assert by_key["coop_week_menu"]["stale"] is False, "방금 넣은 크롤은 신선하다"
@@ -351,7 +356,7 @@ def test_freshness_엔드포인트가_stale을_알린다(db):
     c.commit()
     c.close()
 
-    fr2 = client.get("/admin/freshness").json()
+    fr2 = client.get("/admin/freshness", headers=hdr).json()
     old = {s["source_key"]: s for s in fr2["sources"]}["likehome_week_menu"]
     assert old["stale"] is True and old["age_hours"] > 24
     assert fr2["any_stale"] is True

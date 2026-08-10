@@ -56,16 +56,26 @@ class SafetyConfig:
         return None
 
     # ── 배포 차단 ────────────────────────────────────────────────
+    # 확인 등급. 위로 갈수록 강하다.
+    #   official_site — 각 기관 공식 홈페이지에서 확인
+    #   phone         — 직접 전화해서 확인 (최고 등급)
+    VERIFY_METHODS = ("official_site", "phone")
+
     @staticmethod
     def _provenance_ok(c: dict) -> bool:
         """확인 이력이 갖춰졌는가.
 
-        ★ `verified: true` 만으로는 부족하다. **누가 · 언제** 확인했는지가 있어야 한다.
-          T4 레코드에 author/approved_by 를 강제한 것과 같은 이유다.
+        ★ `verified: true` 만으로는 부족하다. **누가 · 언제 · 어떻게** 확인했는지가
+          있어야 한다. T4 레코드에 author/approved_by 를 강제한 것과 같은 이유다.
           출처 없는 검증은 검증이 아니라 주장이다.
+
+        verified_method 를 같이 받는 이유 — 나중에 누가 봐도 **어느 수준의 확인인지**
+        알 수 있어야 한다. 'official_site' 로 열어두고 나중에 'phone' 으로
+        등급만 올리는 경로가 열린다.
         """
         return bool(str(c.get("verified_at") or "").strip()
-                    and str(c.get("verified_by") or "").strip())
+                    and str(c.get("verified_by") or "").strip()
+                    and str(c.get("verified_method") or "").strip())
 
     def _check_provenance(self) -> None:
         """verified: true 인데 확인 이력이 없으면 **예외**.
@@ -78,8 +88,14 @@ class SafetyConfig:
                 if c.get("verified", False) and not self._provenance_ok(c):
                     raise SafetyConfigError(
                         f"[{name}] {c['label']} — verified: true 인데 "
-                        f"verified_at/verified_by 가 없다. "
-                        f"누가 언제 확인했는지 없는 검증은 검증이 아니다."
+                        f"verified_at/verified_by/verified_method 중 빠진 게 있다. "
+                        f"누가 언제 어떻게 확인했는지 없는 검증은 검증이 아니다."
+                    )
+                m = str(c.get("verified_method") or "").strip()
+                if m and m not in self.VERIFY_METHODS:
+                    raise SafetyConfigError(
+                        f"[{name}] {c['label']} — 알 수 없는 verified_method={m!r}. "
+                        f"허용: {self.VERIFY_METHODS}"
                     )
 
     def unverified_contacts(self) -> list[tuple[str, str]]:
@@ -108,6 +124,7 @@ class SafetyConfig:
                     "verified": bool(c.get("verified") and self._provenance_ok(c)),
                     "verified_at": c.get("verified_at") or "",
                     "verified_by": c.get("verified_by") or "",
+                    "verified_method": c.get("verified_method") or "",
                     "categories": [name],
                 }
         return list(seen.values())

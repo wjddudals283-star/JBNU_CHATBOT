@@ -95,19 +95,27 @@ python -m pytest tests -m smoke   # 실사이트에 실제로 붙는다
 
 ---
 
-## ⚠️ 안전 분기 (D11)
+## 안전 분기 (D11)
 
 인권·성폭력·긴급 발화는 **인텐트 분류보다 먼저** 가로채 사람에게 연결한다.
-챗봇이 상담하지 않고, 대화를 이어가지 않는다.
+챗봇이 상담하지 않고, 대화를 이어가지 않는다(추천질문 없음).
 
-**연락처가 하나라도 미확인이면 안전 분기 전체가 차단된다.**
-지금이 그 상태이며, 상담 창구 목록 대신 "총학에 직접 문의"만 나간다.
-해제하려면 총학이 각 기관에 **직접 전화해서** 확인하고
-`config/safety_contacts.yaml`에 `verified` / `verified_at` / `verified_by`를 채운다.
+연락처는 넷을 다 갖춰야 '확인됨'이 된다 —
+`verified` / `verified_at` / `verified_by`(직책) / `verified_method`.
+**하나라도 미확인이면 전체가 차단**되고 "총학에 직접 문의"만 나간다.
+
+현재: 2026-08-10 공식 홈페이지 확인 완료(`official_site`), 열림.
+개강 전 전북대 두 곳은 전화 확인으로 `phone` 등급 승급 예정.
 
 ```bash
 python -c "from skill import safety; [print(x) for x in safety.load().verification_worksheet()]"
 ```
+
+## 인증
+
+`/skill/*`, `/admin/*` 은 `X-Skill-Token` 헤더가 필요하다.
+토큰이 설정 안 되면 **열지 않고 503** 을 준다(fail closed).
+`/health` 만 공개이며 `{"ok": true}` 외에는 아무것도 담지 않는다.
 
 ---
 

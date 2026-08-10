@@ -5,34 +5,40 @@
 # ═══════════════════════════════════════════════════════════════
 # 배포 차단 조건 (01_설계.md §7)
 #
-#   한 항목이 '확인됨'이 되려면 셋이 다 있어야 한다.
+#   한 항목이 '확인됨'이 되려면 넷이 다 있어야 한다.
 #       verified: true
-#       verified_at: YYYY-MM-DD     확인한 날짜
-#       verified_by: 직책            확인한 사람
+#       verified_at:     YYYY-MM-DD   확인한 날짜
+#       verified_by:     직책          확인한 사람 = 이 수준으로 가겠다고 결정한 책임 주체
+#       verified_method: 확인 등급     official_site | phone
 #
-#   ★ verified_by 에는 **직책만** 쓴다 (예: 사무국장, 복지국장).
-#     이 저장소는 Public 이고, 한 번 커밋된 값은 지워도 히스토리에 남는다.
-#     책임 소재는 직책으로 충분히 특정된다.
+#   ★ verified_by 에는 **직책만** 쓴다. 이 저장소는 Public 이고,
+#     한 번 커밋된 값은 지워도 히스토리에 남는다.
 #
 #   하나라도 빠지면 그 항목은 미확인이고, 미확인이 하나라도 있으면
 #   **안전 분기 전체가 차단**된다(전부 아니면 전무). 그 상태에서는 상담 창구를
 #   나열하지 않고 "총학에 직접 문의" 한 줄만 내보낸다.
 #
-#   verified: true 인데 verified_at/verified_by 가 없으면 **예외를 던진다.**
-#   조용히 미확인으로 강등하지 않는다 — 절반만 채운 항목은 누군가 확인을
-#   시작했다가 멈춘 흔적이고, 그 상태로 배포되는 게 가장 위험하다.
-#   T4 레코드에 author/approved_by 를 강제한 것과 같은 이유다.
+#   verified: true 인데 나머지가 없으면 **예외를 던진다.** 조용히 강등하지 않는다 —
+#   절반만 채운 항목은 누군가 확인을 시작했다가 멈춘 흔적이고,
+#   그 상태로 배포되는 게 가장 위험하다.
 #
 # ─────────────────────────────────────────────────────────────
-# ⚠️ 현재 상태: 5건 전부 미확인 → 배포 차단 중
+# 확인 등급 (verified_method)
 #
-#   아래 phone 값은 **웹 검색 결과**이며 근거로 부족하다.
-#   총학이 각 기관에 **직접 전화해서** 받은 번호로 교체하고,
-#   그때 verified_at / verified_by 를 같이 채운다.
-#   웹 값이 맞더라도 "확인 통화를 했다"는 사실 자체가 근거다.
+#   official_site  각 기관 공식 홈페이지에서 확인. 현재 수준
+#   phone          직접 전화해서 확인. 최고 등급
 #
-#   확인할 목록:  python -c "from skill import safety; \
-#                   [print(x) for x in safety.load().verification_worksheet()]"
+#   등급을 기록해 두면 나중에 누가 봐도 어느 수준의 확인인지 알 수 있고,
+#   나중에 등급만 올리면 된다.
+#
+# ⚠️ 다음 할 일 — 전북대 두 곳은 **개강 전에 전화로 확인**해서
+#    verified_method 를 phone 으로 올릴 것. 교내 부서는 개편이 잦다.
+#      · 전북대 행복드림센터  063-219-5301
+#      · 전북대 인권센터      063-270-3025
+#
+#    국가인권위원회(1331)는 공식 사이트에서 확인되지 않아 **목록에서 뺐다.**
+#    확인되면 harassment 에 다시 넣는다. 확인 안 된 번호를 남겨두면
+#    안전 분기 전체가 차단되고, 급한 사람에게 목록을 못 준다.
 # ═══════════════════════════════════════════════════════════════
 
 unverified_fallback: |
@@ -54,17 +60,23 @@ categories:
       많이 힘드셨겠어요. 혼자 감당하지 않으셔도 됩니다.
       지금 바로 이야기 나눌 수 있는 곳으로 연결해 드릴게요.
     contacts:
+      # 109 는 2024년 1393 등 8개 상담전화가 통합된 번호다.
+      # ★ 이런 배경 설명은 note 에 넣지 않는다 — note 는 답변에 그대로 나가고,
+      #   위기 상황의 사용자에게 필요 없는 정보는 소음이다.
+      #   note 는 '진수당 1층' 처럼 **찾아가는 데 필요한 것**만 쓴다.
       - label: "자살예방상담전화 (24시간)"
-        phone: "109"           # 웹: 2024년 1393 등 8개 상담전화가 통합
-        verified: false
-        verified_at: ""
-        verified_by: ""
+        phone: "109"
+        verified: true
+        verified_at: "2026-08-10"
+        verified_by: "총학생회"
+        verified_method: official_site
       - label: "전북대 행복드림센터"
-        phone: "063-219-5301"  # 웹: 진수당 1층
+        phone: "063-219-5301"
         note: "진수당 1층"
-        verified: false
-        verified_at: ""
-        verified_by: ""
+        verified: true
+        verified_at: "2026-08-10"
+        verified_by: "총학생회"
+        verified_method: official_site
 
   violence:
     keywords: [성폭력, 성추행, 성희롱, 강제추행, 데이트폭력, 스토킹, 폭행, 협박, 몰카, 불법촬영]
@@ -74,32 +86,31 @@ categories:
     contacts:
       - label: "여성긴급전화 (24시간)"
         phone: "1366"
-        verified: false
-        verified_at: ""
-        verified_by: ""
+        verified: true
+        verified_at: "2026-08-10"
+        verified_by: "총학생회"
+        verified_method: official_site
       - label: "전북대 인권센터"
-        phone: "063-270-3025"  # 웹: 진수당 154호
+        phone: "063-270-3025"
         note: "진수당 154호"
-        verified: false
-        verified_at: ""
-        verified_by: ""
+        verified: true
+        verified_at: "2026-08-10"
+        verified_by: "총학생회"
+        verified_method: official_site
 
   harassment:
     keywords: [괴롭힘, 괴롭혀, 따돌림, 왕따, 갑질, 인권침해, 차별당, 폭언]
     lead: |
       혼자 참지 않으셔도 됩니다. 상담 창구를 안내해 드릴게요.
     contacts:
+      # 국가인권위원회(1331)는 공식 사이트 확인 불가로 제외됨. 위 주석 참고.
       - label: "전북대 인권센터"
         phone: "063-270-3025"
         note: "진수당 154호"
-        verified: false
-        verified_at: ""
-        verified_by: ""
-      - label: "국가인권위원회"
-        phone: "1331"
-        verified: false
-        verified_at: ""
-        verified_by: ""
+        verified: true
+        verified_at: "2026-08-10"
+        verified_by: "총학생회"
+        verified_method: official_site
 
   mental_health:
     keywords: [우울해, 우울증, 불안해, 공황, 힘들어죽]
@@ -109,6 +120,7 @@ categories:
       - label: "전북대 행복드림센터"
         phone: "063-219-5301"
         note: "진수당 1층"
-        verified: false
-        verified_at: ""
-        verified_by: ""
+        verified: true
+        verified_at: "2026-08-10"
+        verified_by: "총학생회"
+        verified_method: official_site

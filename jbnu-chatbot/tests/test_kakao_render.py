@@ -230,32 +230,47 @@ def test_둘_다_관측이고_다르면_1차를_채택하고_경보(loaded=None)
 # 안전 분기 배포 차단
 # ═══════════════════════════════════════════════════════════════
 
-def test_미확인_번호가_있으면_목록을_안_내보낸다():
-    """급한 사람에게 '일부만 맞는 목록'을 주면 어느 줄이 맞는지 떠넘기는 것이다."""
+def test_현재_설정은_배포_가능하다():
+    """총학이 공식 사이트로 확인 완료(2026-08-10). 이제 상담 창구가 나간다."""
     cfg = safety.load()
-    assert not cfg.deployable, "지금은 총학 확인 전이므로 배포 불가 상태여야 한다"
-    m = cfg.match("죽고싶어요")
-    text = cfg.response_text(m)
-    assert "총학" in text
-    assert "109" not in text and "063-" not in text, "미확인 번호가 새면 안 된다"
+    assert cfg.deployable
+    assert cfg.unverified_contacts() == []
+    text = cfg.response_text(cfg.match("죽고싶어요"))
+    assert "109" in text and "112" in text
 
 
-def _yaml(contact_line: str) -> str:
+GOOD = ("{label: 자살예방상담전화, phone: '109', verified: true, "
+        "verified_at: '2026-08-10', verified_by: '총학생회', "
+        "verified_method: official_site}")
+
+
+def _yaml(*contact_lines: str) -> str:
+    body = "".join(f"      - {c}\n" for c in contact_lines)
     return ("priority: [emergency]\nfooter: '긴급시 112'\n"
             "unverified_fallback: 총학에 문의\n"
             "categories:\n  emergency:\n    keywords: [죽고싶]\n    lead: 안내\n"
-            f"    contacts:\n      - {contact_line}\n")
+            f"    contacts:\n{body}")
 
 
 def test_전부_확인되면_번호가_나간다(tmp_path):
     p = tmp_path / "s.yaml"
-    p.write_text(_yaml(
-        "{label: 자살예방상담전화, phone: '109', verified: true, "
-        "verified_at: '2026-08-11', verified_by: '총무국장 홍길동'}"), encoding="utf-8")
+    p.write_text(_yaml(GOOD), encoding="utf-8")
     cfg = safety.load(p)
     assert cfg.deployable
     text = cfg.response_text(cfg.match("죽고싶어요"))
     assert "109" in text and "112" in text
+
+
+def test_하나라도_미확인이면_전부_막는다(tmp_path):
+    """전부 아니면 전무 — 일부만 맞는 목록을 주면 어느 줄이 맞는지 떠넘기는 것이다."""
+    p = tmp_path / "mixed.yaml"
+    p.write_text(_yaml(GOOD, "{label: 미확인기관, phone: '000-0000'}"),
+                 encoding="utf-8")
+    cfg = safety.load(p)
+    assert not cfg.deployable
+    text = cfg.response_text(cfg.match("죽고싶어요"))
+    assert "총학" in text
+    assert "109" not in text, "확인된 번호까지 같이 막힌다"
 
 
 def test_확인이력_없는_verified는_예외(tmp_path):
@@ -266,30 +281,64 @@ def test_확인이력_없는_verified는_예외(tmp_path):
     """
     for line in (
         "{label: X, phone: '109', verified: true}",
-        "{label: X, phone: '109', verified: true, verified_at: '2026-08-11'}",
-        "{label: X, phone: '109', verified: true, verified_by: '홍길동'}",
-        "{label: X, phone: '109', verified: true, verified_at: '', verified_by: ''}",
+        "{label: X, phone: '109', verified: true, verified_at: '2026-08-10'}",
+        "{label: X, phone: '109', verified: true, verified_by: '총학생회'}",
+        "{label: X, phone: '109', verified: true, verified_at: '2026-08-10', "
+        "verified_by: '총학생회'}",                                  # method 누락
+        "{label: X, phone: '109', verified: true, verified_at: '', "
+        "verified_by: '', verified_method: ''}",
     ):
         p = tmp_path / "bad.yaml"
         p.write_text(_yaml(line), encoding="utf-8")
-        with pytest.raises(safety.SafetyConfigError) as e:
+        with pytest.raises(safety.SafetyConfigError):
             safety.load(p)
-        assert "verified_at" in str(e.value) or "verified_by" in str(e.value)
 
 
-def test_확인_워크시트가_해제_경로를_준다():
-    """차단만 하지 않고, 총학이 전화 걸며 채울 목록을 준다."""
+def test_알_수_없는_확인등급은_예외(tmp_path):
+    p = tmp_path / "m.yaml"
+    p.write_text(_yaml(
+        "{label: X, phone: '109', verified: true, verified_at: '2026-08-10', "
+        "verified_by: '총학생회', verified_method: 대충확인}"), encoding="utf-8")
+    with pytest.raises(safety.SafetyConfigError) as e:
+        safety.load(p)
+    assert "verified_method" in str(e.value)
+
+
+def test_확인_워크시트가_등급까지_보여준다():
+    """나중에 누가 봐도 어느 수준의 확인인지 알 수 있어야 한다."""
     rows = safety.load().verification_worksheet()
-    assert rows and all(r["verified"] is False for r in rows)
-    labels = {r["label"] for r in rows}
-    assert "전북대 인권센터" in labels
-    # 같은 기관이 여러 범주에 걸쳐도 한 줄로 모은다 (전화는 한 번만 걸면 된다)
+    assert rows and all(r["verified"] for r in rows)
+    assert {r["verified_method"] for r in rows} == {"official_site"}
+    # 같은 기관이 여러 범주에 걸쳐도 한 줄로 모은다
     center = next(r for r in rows if r["label"] == "전북대 인권센터")
     assert set(center["categories"]) == {"violence", "harassment"}
 
 
-def test_미확인_항목이_어느_것인지_알려준다():
+def test_안전_응답에_내부_메모가_새지_않는다():
+    """note 는 답변에 그대로 나간다. 찾아가는 데 필요한 것만 쓴다.
+
+    위기 상황의 사용자에게 배경 설명은 소음이고, 소음이 쌓이면 정작 필요한
+    번호가 묻힌다.
+    """
     cfg = safety.load()
-    un = cfg.unverified_contacts()
-    assert un, "확인 대상 목록이 나와야 총학이 전화를 걸 수 있다"
-    assert all(isinstance(x, tuple) and len(x) == 2 for x in un)
+    text = cfg.response_text(cfg.match("죽고싶어요"))
+    assert "진수당 1층" in text, "찾아가는 정보는 남는다"
+    for noise in ("통합", "1393", "2024년"):
+        assert noise not in text, f"내부 메모가 새어 나갔다: {noise!r}"
+
+
+def test_확인_불가한_기관은_목록에_없다():
+    """국가인권위원회(1331)는 공식 사이트 확인 불가로 제외했다.
+
+    확인 안 된 번호를 남겨두면 안전 분기 전체가 막혀 급한 사람에게 목록을 못 준다.
+    """
+    labels = {r["label"] for r in safety.load().verification_worksheet()}
+    assert not any("국가인권위" in x for x in labels)
+
+
+def test_미확인_항목이_어느_것인지_알려준다(tmp_path):
+    """차단만 하지 않고 해제 경로를 준다."""
+    p = tmp_path / "u.yaml"
+    p.write_text(_yaml(GOOD, "{label: 미확인기관, phone: '000'}"), encoding="utf-8")
+    un = safety.load(p).unverified_contacts()
+    assert [x[1] for x in un] == ["미확인기관 000"]

@@ -198,10 +198,8 @@ def test_T13c_안전응답은_대화를_이어가지_않는다():
     assert r["version"] == "2.0"
     assert "quickReplies" not in r["template"]
     text = r["template"]["outputs"][0]["simpleText"]["text"]
-    # ★ 지금은 총학 확인 전이라 배포 차단 상태다 → 번호 대신 총학 안내가 나간다.
-    #   확인이 끝나 verified: true 가 되면 번호가 나간다(별도 테스트).
-    assert "총학" in text and "112" in text
-    assert "063-" not in text
+    # 총학 확인 완료(2026-08-10, official_site) → 상담 창구가 나간다
+    assert "109" in text and "112" in text
 
 
 def test_T13d_위험도가_높은_범주가_먼저_걸린다():
@@ -223,7 +221,8 @@ def test_연락처는_코드가_아니라_설정에서_온다(tmp_path):
         "categories:\n  emergency:\n    keywords: [테스트키워드]\n"
         "    lead: 안내\n    contacts:\n"
         "      - {label: 테스트, phone: '000', verified: true,\n"
-        "         verified_at: '2026-08-11', verified_by: '총무국장'}\n",
+        "         verified_at: '2026-08-10', verified_by: '총학생회',\n"
+        "         verified_method: official_site}\n",
         encoding="utf-8")
     cfg = safety.load(p)
     m = cfg.match("테스트키워드요")

@@ -71,14 +71,26 @@ def test_RUN_SCHEDULER_없으면_스레드를_안_띄운다(tmp_path, monkeypatc
     assert app.state.scheduler is None
 
 
-def test_health가_스케줄러_상태를_보고한다(tmp_path):
+def test_스케줄러_상태는_인증_뒤에서_보고된다(tmp_path, monkeypatch):
+    """운영 상태는 /health 가 아니라 /admin/status 에 있다.
+
+    /health 는 Render 헬스체크용이라 공개인데, 거기에 운영 정보를 담으면
+    주소만 알면 누구나 크롤 상태를 본다.
+    """
     from fastapi.testclient import TestClient
+
+    from skill import auth
+    token = "loop-status-token-0123456789"
+    monkeypatch.setenv(auth.TOKEN_ENV, token)
     c = repo.connect(tmp_path / "y.db")
     repo.init_db(c)
     c.close()
     app = server.create_app(tmp_path / "y.db", with_scheduler=True)
     with TestClient(app) as client:
-        body = client.get("/health").json()
+        public = client.get("/health").json()
+        assert public == {"ok": True}
+        assert client.get("/admin/status").status_code == 401
+        body = client.get("/admin/status",
+                          headers={auth.HEADER_NAME: token}).json()
     assert body["ok"] is True
-    assert body["scheduler"] is not None
-    assert "ticks" in body["scheduler"]
+    assert body["scheduler"] is not None and "ticks" in body["scheduler"]

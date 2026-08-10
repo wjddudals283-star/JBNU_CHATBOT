@@ -82,19 +82,49 @@ Render 공식 문서 확인 결과:
 5. New → **Blueprint** → 저장소 선택 → `render.yaml` 자동 인식 → Apply
 6. 배포 후 `https://<서비스>.onrender.com/health` 접속해서 확인
 
-### /health 가 이렇게 나오면 정상
+### 엔드포인트와 인증
 
-```json
-{
-  "ok": true,
-  "meal_service": 95,
-  "scheduler": {"ticks": 3, "last_tick": "2026-08-10T21:45:00+09:00", "last_error": null}
-}
+| 경로 | 공개 여부 | 내용 |
+|---|---|---|
+| `GET /health` | **공개** | `{"ok": true}` 뿐. Render 헬스체크용 |
+| `GET /admin/status` | 인증 | 크롤 건수 · 스케줄러 상태 |
+| `GET /admin/freshness` | 인증 | 소스별 마지막 성공 · stale 여부 |
+| `POST /skill/{block}` | 인증 | 카카오 스킬 |
+
+인증은 `X-Skill-Token` 헤더다. `render.yaml` 이 `generateValue: true` 로
+256비트 랜덤 값을 자동 생성하므로 **저장소에 값이 남지 않는다.**
+
+> **Fail closed** — `SKILL_TOKEN` 이 없으면 열어두지 않고 **503** 을 준다.
+> "설정을 깜빡했다"가 곧 "누구나 호출 가능"이 되면 안 된다.
+> `/health` 는 계속 200 이라 Render 가 배포를 실패로 보지 않는다.
+
+배포 후 확인:
+
+```bash
+curl https://<서비스>.onrender.com/health
+# {"ok":true}
+
+curl -H "X-Skill-Token: <Dashboard 에서 복사>" \
+     https://<서비스>.onrender.com/admin/status
+# {"ok":true,"meal_service":95,"scheduler":{"ticks":3,...}}
 ```
 
+- 인증 없이 `/admin/status` → **401** 이어야 정상
+- 인증 있는데 **503** → `SKILL_TOKEN` 이 안 걸렸다
 - `scheduler` 가 `null` → `RUN_SCHEDULER=1` 이 안 걸렸다
 - `last_error` 가 채워짐 → 크롤이 실패 중. 로그 확인
 - `ticks` 가 안 늘어남 → 스레드가 죽었다. 재배포
+
+### 토큰을 오픈빌더에 넣기
+
+Render Dashboard → 서비스 → Environment → `SKILL_TOKEN` 값 복사 →
+챗봇 관리자센터 → 스킬 → 해당 스킬 → **헤더 추가**
+
+```
+X-Skill-Token: <복사한 값>
+```
+
+이 값은 **총학 공용 계정 외에는 공유하지 않는다.** 슬랙·카톡에 붙여넣지 말 것.
 
 ---
 
@@ -116,31 +146,42 @@ python -m crawler.schedule --hours-drift
 
 ---
 
-## 5. ⚠️ 배포 차단 조건 — 안전 분기
+## 5. 안전 분기 — 현재 열림 (등급 `official_site`)
 
-`config/safety_contacts.yaml` 의 모든 번호가 `verified: true` 가 되기 전에는
-**상담 창구 목록이 나가지 않는다.** 지금은 "총학에 직접 문의" 한 줄만 나간다.
-이건 버그가 아니라 의도된 차단이다.
+2026-08-10 총학생회가 각 기관 **공식 홈페이지에서 확인** 완료. 배포 가능 상태다.
 
-해제하려면 총학이 아래에 **직접 전화해서** 확인하고 `verified: true` 로 바꾼다.
-웹 검색 결과는 근거로 부족하다.
+| 기관 | 번호 | 등급 |
+|---|---|---|
+| 자살예방상담전화 (24시간) | 109 | official_site |
+| 전북대 행복드림센터 | 063-219-5301 (진수당 1층) | official_site |
+| 여성긴급전화 (24시간) | 1366 | official_site |
+| 전북대 인권센터 | 063-270-3025 (진수당 154호) | official_site |
 
+> 국가인권위원회(1331)는 공식 사이트에서 확인되지 않아 **목록에서 뺐다.**
+> 확인 안 된 번호를 남겨두면 안전 분기 **전체**가 막혀 급한 사람에게 목록을 못 준다.
+
+### ⚠️ 개강 전에 할 일 — 전북대 두 곳을 `phone` 등급으로
+
+교내 부서는 개편이 잦다. 직접 전화해서 확인한 뒤 `verified_method` 를 올린다.
+
+```yaml
+verified_method: phone
+verified_at: "2026-08-__"
 ```
-자살예방상담전화        109
-전북대 행복드림센터     063-219-5301   (진수당 1층)
-여성긴급전화            1366
-전북대 인권센터         063-270-3025   (진수당 154호)
-국가인권위원회          1331
-```
 
-확인 대상 목록은 코드로도 뽑을 수 있다.
+`config/safety_contacts.yaml` 만 고쳐 커밋하면 된다 — 코드 변경이 필요 없다.
+
+### 규칙
+
+한 항목이 '확인됨'이 되려면 **넷**이 다 있어야 한다.
+`verified` / `verified_at` / `verified_by`(직책) / `verified_method`.
+하나라도 빠지면 **예외를 던진다** — 조용히 강등하지 않는다.
+그리고 하나라도 미확인이면 **전체가 차단**된다(전부 아니면 전무).
 
 ```python
 from skill import safety
-safety.load().unverified_contacts()
+safety.load().verification_worksheet()   # 등급까지 나온다
 ```
-
-번호를 고친 뒤에는 `config/` 만 커밋하면 된다 — 코드 변경 없이 반영된다.
 
 ---
 
