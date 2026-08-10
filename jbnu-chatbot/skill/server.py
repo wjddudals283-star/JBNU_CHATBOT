@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import logging
 import os
 import pathlib
 import sqlite3
@@ -72,8 +73,26 @@ def _scheduler_enabled() -> bool:
     return os.environ.get("RUN_SCHEDULER", "").strip() in ("1", "true", "yes")
 
 
+def _configure_logging() -> None:
+    """컨테이너 로그로 나가게 한다.
+
+    ★ print() 만으로는 안 된다. 컨테이너에서 stdout 은 블록 버퍼링이라
+      백그라운드 스레드의 출력이 버퍼가 찰 때까지 안 보인다.
+      logging 은 stderr 로 나가고 uvicorn 이 잡아준다.
+      (render.yaml 에 PYTHONUNBUFFERED=1 도 같이 걸어둔다)
+    """
+    root = logging.getLogger()
+    if not root.handlers:
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s %(levelname)s %(name)s %(message)s",
+        )
+    logging.getLogger("jbnu").setLevel(logging.INFO)
+
+
 def create_app(db_path: pathlib.Path | None = None, *,
                with_scheduler: bool | None = None) -> FastAPI:
+    _configure_logging()
     app = FastAPI(title="전북대 총학 챗봇 스킬서버")
     app.state.db_path = db_path or DB_PATH
     app.state.scheduler = None
@@ -117,10 +136,8 @@ def create_app(db_path: pathlib.Path | None = None, *,
             s = app.state.scheduler
             return {
                 "ok": True, "meal_service": n,
-                "scheduler": None if s is None else {
-                    "ticks": s.ticks, "last_tick": s.last_tick,
-                    "last_error": s.last_error,
-                },
+                "now_kst": dt.datetime.now(KST).isoformat(),
+                "scheduler": None if s is None else s.status(),
             }
         except Exception as e:  # noqa: BLE001
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}

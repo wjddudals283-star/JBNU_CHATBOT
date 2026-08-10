@@ -9,14 +9,20 @@
   나중에 Postgres 로 옮기면 Cron Job 분리가 가능해진다(3단계).
 
 동작
-  · 15분마다 due_sources() 를 물어보고 차례인 것만 돈다
+  · 기동 즉시 한 번 틱, 그 뒤 15분마다
   · 창을 놓쳐도 그날 성공이 없으면 따라잡는다 (schedule.due_sources)
   · 예외가 나도 루프는 죽지 않는다. 죽으면 침묵이 되고, 침묵이 가장 위험하다
+
+★ 로그
+  전부 `[scheduler]` 로 시작하는 ASCII 라인이다. 한국어로 검색하면 안 걸리고,
+  아무것도 안 도는 것과 로그가 안 보이는 것을 구분할 수 없기 때문이다.
+  **할 일이 없는 틱도 로그를 남긴다** — 침묵과 정상을 구분해야 한다.
 """
 
 from __future__ import annotations
 
 import datetime as dt
+import logging
 import os
 import threading
 import traceback
@@ -28,6 +34,8 @@ from store import repo
 KST = dt.timezone(dt.timedelta(hours=9))
 DEFAULT_INTERVAL_SEC = 15 * 60
 
+log = logging.getLogger("jbnu.scheduler")
+
 
 class SchedulerLoop:
     def __init__(self, *, interval_sec: int = DEFAULT_INTERVAL_SEC,
@@ -36,18 +44,26 @@ class SchedulerLoop:
         self.window = window_min
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+        self.started_at: str | None = None
         self.last_tick: str | None = None
+        self.last_targets: list[str] = []
         self.last_error: str | None = None
         self.ticks = 0
+        self.runs = 0
 
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
+            log.info("[scheduler] already running, skip start")
             return
+        self.started_at = dt.datetime.now(KST).isoformat()
+        log.info("[scheduler] START interval=%ss window=%smin db=%s tz=KST at=%s",
+                 self.interval, self.window, run_mod.DB_PATH, self.started_at)
         self._thread = threading.Thread(target=self._run, name="jbnu-scheduler",
                                         daemon=True)
         self._thread.start()
 
     def stop(self) -> None:
+        log.info("[scheduler] STOP requested after %s ticks", self.ticks)
         self._stop.set()
 
     def tick(self, now: dt.datetime | None = None) -> list[str]:
@@ -62,21 +78,50 @@ class SchedulerLoop:
                                         conn=conn)
         finally:
             conn.close()
-        for key in targets:
-            run_mod.main(["--source", key])
-        self.last_tick = now.isoformat()
+
         self.ticks += 1
+        # ★ 할 일이 없어도 남긴다. 이게 없으면 '안 돎'과 '할 일 없음'이 같은 모양이다.
+        log.info("[scheduler] TICK #%s at=%s due=%s",
+                 self.ticks, now.strftime("%Y-%m-%d %H:%M"), targets or "none")
+
+        for key in targets:
+            log.info("[scheduler] RUN source=%s", key)
+            try:
+                run_mod.main(["--source", key])
+                self.runs += 1
+                log.info("[scheduler] DONE source=%s", key)
+            except Exception:  # noqa: BLE001
+                # 한 소스가 죽어도 나머지는 돌린다
+                line = traceback.format_exc().strip().splitlines()[-1]
+                log.error("[scheduler] FAIL source=%s %s", key, line)
+                self.last_error = f"{key}: {line}"
+
+        self.last_tick = now.isoformat()
+        self.last_targets = targets
         return targets
 
     def _run(self) -> None:
         while not self._stop.is_set():
             try:
                 self.tick()
-                self.last_error = None
             except Exception:  # noqa: BLE001
                 # ★ 루프를 죽이지 않는다. 죽으면 아무 기록도 안 남는 침묵이 된다.
                 self.last_error = traceback.format_exc().strip().splitlines()[-1]
+                log.error("[scheduler] TICK ERROR %s", self.last_error)
             self._stop.wait(self.interval)
+        log.info("[scheduler] loop exited after %s ticks", self.ticks)
+
+    def status(self) -> dict:
+        return {
+            "started_at": self.started_at,
+            "ticks": self.ticks,
+            "runs": self.runs,
+            "last_tick": self.last_tick,
+            "last_targets": self.last_targets,
+            "last_error": self.last_error,
+            "interval_sec": self.interval,
+            "alive": bool(self._thread and self._thread.is_alive()),
+        }
 
 
 def should_run() -> bool:
