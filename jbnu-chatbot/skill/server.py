@@ -27,8 +27,8 @@ from typing import Any
 
 from fastapi import Depends, FastAPI, Request
 
-from skill import (aliases, auth, branch, ingest_api, kakao, routing, safety,
-                   templates)
+from skill import (aliases, auth, branch, calendar_search, ingest_api, kakao,
+                   routing, safety, templates)
 from store import repo
 
 log = logging.getLogger("jbnu.skill")
@@ -211,6 +211,29 @@ def create_app(db_path: pathlib.Path | None = None, *,
         return {"sources": out,
                 "any_stale": any(x["stale"] for x in out) if out else True}
 
+    # ★ 페이지 커버리지. 어디를 못 읽고 있는지 여기 하나로 본다.
+    #   1000페이지가 되면 사람이 못 따라간다 — 그래서 표가 필요하다.
+    #   URL·제목이 그대로 나가므로 인증 뒤에 둔다.
+    @app.get("/admin/coverage", dependencies=[Depends(auth.require_token)])
+    def coverage(limit: int = 50) -> dict:
+        c = conn()
+        try:
+            summary = repo.coverage_summary(c)
+            gaps = repo.coverage_gaps(c, limit=limit)
+        finally:
+            c.close()
+        # '왜 못 하는가' 를 상태별로 갈라 준다. 다 '모른다' 로 뭉치면 고칠 수 없다.
+        meaning = {
+            "ok": "인용 가능",
+            "empty": "파싱은 됐으나 원문에 본문이 없음 (스크립트로 그리는 페이지)",
+            "parse_error": "구조가 안 맞아 못 읽음 — 파서 대응 필요",
+            "fetch_error": "가져오지 못함 (차단·타임아웃)",
+            "blocked": "정책상 긁지 않음 — 못 한 게 아니라 안 한 것",
+            "not_attempted": "발견만 하고 아직 시도 안 함",
+            "skipped": "대상 아님",
+        }
+        return {**summary, "status_meaning": meaning, "gaps": gaps}
+
     # ★ 단일 진입점. 오픈빌더에 스킬을 **하나만** 등록하면 되고,
     #   블록을 추가할 때 스킬 재등록·토큰 재입력이 필요 없다.
     @app.post("/skill", dependencies=[Depends(auth.require_token)])
@@ -280,6 +303,14 @@ def _handle_upcoming(db_path: pathlib.Path, params: dict, detail: dict,
                      now: dt.datetime | None = None) -> dict:
     now = now or dt.datetime.now(KST)
     today = now.date().isoformat()
+
+    # ★ 한 블록에 두 종류 발화가 섞여 들어온다.
+    #   "마감 뭐 있어"(목록)와 "수강신청 언제야"(특정 조회)는 다른 질문이다.
+    #   학생은 블록 경계를 모르므로 서버가 가른다.
+    topic = calendar_search.find_topic(utterance)
+    if topic is not None:
+        return _handle_calendar_item(db_path, utterance, now=now)
+
     days = _resolve_days(params, utterance)
     until = (now.date() + dt.timedelta(days=days)).isoformat()
 
@@ -296,6 +327,40 @@ def _handle_upcoming(db_path: pathlib.Path, params: dict, detail: dict,
             observed_at=observed, stale=stale)
     finally:
         conn.close()
+
+
+# 항목 검색은 넓게 조회한다. 14일치만 보고 '없다'고 하면
+# **있는 걸 없다고** 하는 오류가 된다.
+ITEM_SEARCH_BACK_DAYS = 200
+ITEM_SEARCH_AHEAD_DAYS = 400
+
+
+def _handle_calendar_item(db_path: pathlib.Path, utterance: str, *,
+                          now: dt.datetime) -> dict:
+    today = now.date()
+    since = (today - dt.timedelta(days=ITEM_SEARCH_BACK_DAYS)).isoformat()
+    until = (today + dt.timedelta(days=ITEM_SEARCH_AHEAD_DAYS)).isoformat()
+
+    conn = repo.connect(db_path)
+    try:
+        rows = repo.query_calendar(conn, since=since, until=until, limit=500)
+    finally:
+        conn.close()
+
+    result = calendar_search.search(rows, utterance)
+    result.entries = calendar_search.rank(result.entries, today.isoformat())
+
+    observed = max((r["observed_at"] for r in rows), default=None)
+    stale = bool(rows) and repo.staleness_hours(observed, now) > \
+        repo.MAX_STALENESS_HOURS["academic_calendar"]
+
+    log.info("[skill] calendar topic=%s outcome=%s hits=%s searched=%s stale=%s",
+             result.topic.key if result.topic else "-", result.outcome.value,
+             len(result.entries), result.searched_total, stale)
+
+    return templates.render_calendar_item(
+        result, today=today.isoformat(), source_url=SCHEDULE_URL,
+        observed_at=observed, stale=stale)
 
 
 _DAYS_RE = re.compile(r"(\d+)\s*일")

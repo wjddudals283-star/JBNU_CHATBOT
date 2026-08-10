@@ -416,3 +416,76 @@ CREATE INDEX IF NOT EXISTS idx_notice_pub   ON notice(published_at DESC);
 CREATE INDEX IF NOT EXISTS idx_calendar_date ON academic_calendar(start_date);
 CREATE INDEX IF NOT EXISTS idx_calendar_term ON academic_calendar(ac_year, ac_semester);
 CREATE INDEX IF NOT EXISTS idx_crawl_source ON crawl_run(source_key, started_at DESC);
+
+
+-- ─────────────────────────────────────────────────────────────────────────
+-- 페이지 커버리지 레지스트리
+--
+-- "없다" 는 한 가지가 아니다. 학생에게는 다 '모른다' 로 보이지만
+-- 우리는 왜 모르는지 구분할 수 있어야 한다. 구분 못 하는 부재는 고칠 수 없다.
+--
+--   ok            파싱 성공, 내용 있음        → 인용한다
+--   empty         파싱 성공, 내용이 비었음     → "그 내용이 없어요" + 원문 링크
+--                 (JS 로 그리는 페이지가 여기 온다. 실제로 certificate.do 가 그렇다)
+--   parse_error   구조가 안 맞아 못 읽음       → "아직 준비 중" + 페이지 링크
+--   fetch_error   가져오지 못함 (403/타임아웃)
+--   blocked       robots/정책상 안 긁음        → 안 한 것이지 못 한 게 아니다
+--   not_attempted 발견은 했으나 아직 시도 안 함
+--
+-- 1000페이지가 되면 사람이 못 따라간다. 그래서 상태를 행으로 남긴다.
+CREATE TABLE IF NOT EXISTS page_registry (
+  page_url        TEXT PRIMARY KEY,
+  host            TEXT NOT NULL,
+  path            TEXT NOT NULL,
+  kind            TEXT NOT NULL DEFAULT 'static_page',
+  discovered_at   TEXT NOT NULL,
+  last_attempt_at TEXT,
+  last_success_at TEXT,
+  http_status     INTEGER,
+  parse_status    TEXT NOT NULL DEFAULT 'not_attempted'
+                  CHECK (parse_status IN ('not_attempted','ok','empty',
+                                          'parse_error','fetch_error',
+                                          'blocked','skipped')),
+  section_count     INTEGER NOT NULL DEFAULT 0,
+  leaf_count        INTEGER NOT NULL DEFAULT 0,
+  table_count       INTEGER NOT NULL DEFAULT 0,
+  empty_block_count INTEGER NOT NULL DEFAULT 0,
+  content_chars     INTEGER NOT NULL DEFAULT 0,
+  pruned_nodes      INTEGER NOT NULL DEFAULT 0,
+  last_modified   TEXT,             -- 페이지가 스스로 표시한 최종수정일
+  title           TEXT NOT NULL DEFAULT '',
+  error_message   TEXT,
+  note            TEXT
+);
+
+-- 페이지 섹션. **사실 테이블이 아니라 인용 테이블이다.**
+-- 여기 담기는 것은 "이 문장이 이 URL 에 있었다" 는 관측이지 우리의 주장이 아니다.
+-- 그래서 verified 필터를 타지 않는다. 대신 출처와 관측 시각을 반드시 들고 다닌다.
+--
+--   색인(검색)  is_leaf=1 인 행 — 잎, 표의 한 행
+--   인용(출력)  quote_key 가 가리키는 행 — 부모 블록, 표 전체
+-- 부모 관계를 저장해 두므로 인용 정책을 바꿔도 재크롤이 필요 없다.
+CREATE TABLE IF NOT EXISTS page_section (
+  section_key   TEXT PRIMARY KEY,
+  page_url      TEXT NOT NULL REFERENCES page_registry(page_url) ON DELETE CASCADE,
+  ordinal       INTEGER NOT NULL,
+  depth         INTEGER NOT NULL,
+  kind          TEXT NOT NULL
+                CHECK (kind IN ('block','list','table','table_row')),
+  path          TEXT NOT NULL,      -- '교내 장학금 > 금액별 분류'
+  text          TEXT NOT NULL,      -- 정규화본 — 매칭용
+  raw_text      TEXT NOT NULL,      -- 원문 — 인용용 (요약 금지)
+  is_leaf       INTEGER NOT NULL CHECK (is_leaf IN (0,1)),
+  parent_key    TEXT,
+  quote_key     TEXT,
+  applies_to    TEXT,               -- 적용 조건 (학과·입학년도 등)
+  section_hash  TEXT NOT NULL,
+  observed_at   TEXT NOT NULL,
+  source_url    TEXT NOT NULL,
+  page_last_modified TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_section_page  ON page_section(page_url, ordinal);
+CREATE INDEX IF NOT EXISTS idx_section_leaf  ON page_section(is_leaf);
+CREATE INDEX IF NOT EXISTS idx_section_quote ON page_section(quote_key);
+CREATE INDEX IF NOT EXISTS idx_registry_stat ON page_registry(parse_status);

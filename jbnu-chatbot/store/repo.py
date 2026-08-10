@@ -871,3 +871,131 @@ def quarantine(conn: sqlite3.Connection, table: str, record_id: str,
     conn.execute(f"UPDATE {table} SET status = 'quarantine' WHERE id = ?", (record_id,))
     if reason and table == "meal_service":
         conn.execute("UPDATE meal_service SET note = ? WHERE id = ?", (reason, record_id))
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# 페이지 커버리지 레지스트리
+#
+# 인용 테이블이지 사실 테이블이 아니다. verified 필터를 태우지 않는다.
+# 대신 source_url 과 observed_at 을 반드시 들고 다닌다 — 인용은 출처가 전부다.
+
+PARSE_STATUSES = ("not_attempted", "ok", "empty", "parse_error",
+                  "fetch_error", "blocked", "skipped")
+
+
+def upsert_page(conn: sqlite3.Connection, *, page_url: str, host: str, path: str,
+                discovered_at: str, kind: str = "static_page",
+                parse_status: str = "not_attempted",
+                last_attempt_at: str | None = None,
+                last_success_at: str | None = None,
+                http_status: int | None = None,
+                section_count: int = 0, leaf_count: int = 0,
+                table_count: int = 0, empty_block_count: int = 0,
+                content_chars: int = 0, pruned_nodes: int = 0,
+                last_modified: str | None = None, title: str = "",
+                error_message: str | None = None,
+                note: str | None = None) -> None:
+    if parse_status not in PARSE_STATUSES:
+        raise ValueError(f"알 수 없는 parse_status: {parse_status}")
+    conn.execute(
+        """
+        INSERT INTO page_registry (page_url, host, path, kind, discovered_at,
+            last_attempt_at, last_success_at, http_status, parse_status,
+            section_count, leaf_count, table_count, empty_block_count,
+            content_chars, pruned_nodes, last_modified, title,
+            error_message, note)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        ON CONFLICT(page_url) DO UPDATE SET
+            host=excluded.host, path=excluded.path, kind=excluded.kind,
+            last_attempt_at=excluded.last_attempt_at,
+            -- 성공 시각은 되돌리지 않는다. 이번에 실패해도 '언제 마지막으로 됐나'는
+            -- 남아 있어야 한다 — 그게 없으면 고장인지 원래 없는 건지 못 가른다.
+            last_success_at=COALESCE(excluded.last_success_at,
+                                     page_registry.last_success_at),
+            http_status=excluded.http_status,
+            parse_status=excluded.parse_status,
+            section_count=excluded.section_count,
+            leaf_count=excluded.leaf_count,
+            table_count=excluded.table_count,
+            empty_block_count=excluded.empty_block_count,
+            content_chars=excluded.content_chars,
+            pruned_nodes=excluded.pruned_nodes,
+            last_modified=excluded.last_modified,
+            title=excluded.title,
+            error_message=excluded.error_message,
+            note=excluded.note
+        """,
+        (page_url, host, path, kind, discovered_at, last_attempt_at,
+         last_success_at, http_status, parse_status, section_count, leaf_count,
+         table_count, empty_block_count, content_chars, pruned_nodes,
+         last_modified, title, error_message, note))
+
+
+def replace_sections(conn: sqlite3.Connection, *, page_url: str,
+                     sections: Iterable[Any], observed_at: str,
+                     page_last_modified: str | None = None) -> int:
+    """섹션은 그 페이지의 **스냅샷**이다. 통째로 갈아끼운다.
+
+    부분 갱신을 하면 사라진 섹션이 남아 유령 인용이 된다.
+    없어진 문장을 인용하는 것은 지어내는 것과 구별되지 않는다.
+    """
+    conn.execute("DELETE FROM page_section WHERE page_url = ?", (page_url,))
+    n = 0
+    for s in sections:
+        conn.execute(
+            """
+            INSERT INTO page_section (section_key, page_url, ordinal, depth,
+                kind, path, text, raw_text, is_leaf, parent_key, quote_key,
+                applies_to, section_hash, observed_at, source_url,
+                page_last_modified)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(section_key) DO NOTHING
+            """,
+            (s.key, page_url, s.ordinal, s.depth, s.kind, s.path_text, s.text,
+             s.quote_text, 1 if s.is_leaf else 0, s.parent_key, s.quote_key,
+             s.applies_to, s.section_hash, observed_at, page_url,
+             page_last_modified))
+        n += 1
+    return n
+
+
+def coverage_summary(conn: sqlite3.Connection) -> dict[str, Any]:
+    """상태별 페이지 수. 이 표가 커버리지의 유일한 근거다."""
+    rows = conn.execute(
+        "SELECT parse_status, COUNT(*) FROM page_registry GROUP BY parse_status"
+    ).fetchall()
+    by_status = {r[0]: r[1] for r in rows}
+    total = sum(by_status.values())
+    ok = by_status.get("ok", 0)
+    agg = conn.execute(
+        "SELECT COUNT(*), SUM(is_leaf) FROM page_section").fetchone()
+    return {
+        "total_pages": total,
+        "by_status": {s: by_status.get(s, 0) for s in PARSE_STATUSES},
+        "answerable_ratio": round(ok / total, 3) if total else 0.0,
+        "sections": agg[0] or 0,
+        "indexed_leaves": agg[1] or 0,
+    }
+
+
+def coverage_gaps(conn: sqlite3.Connection, *, limit: int = 50) -> list[dict]:
+    """답할 수 없는 페이지 목록. 왜 못 하는지까지 같이 준다."""
+    rows = conn.execute(
+        """
+        SELECT page_url, path, title, parse_status, section_count,
+               empty_block_count, last_attempt_at, last_success_at, error_message
+        FROM page_registry
+        WHERE parse_status <> 'ok'
+        ORDER BY CASE parse_status
+                   WHEN 'parse_error' THEN 0 WHEN 'empty' THEN 1
+                   WHEN 'fetch_error' THEN 2 WHEN 'not_attempted' THEN 3
+                   ELSE 4 END, path
+        LIMIT ?
+        """, (limit,)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def page_status(conn: sqlite3.Connection, page_url: str) -> dict | None:
+    r = conn.execute("SELECT * FROM page_registry WHERE page_url = ?",
+                     (page_url,)).fetchone()
+    return dict(r) if r else None
