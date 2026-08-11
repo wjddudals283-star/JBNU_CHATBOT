@@ -1,0 +1,95 @@
+# 사이트 별칭 — 학생이 쓰는 말 → 그 주제를 담당하는 사이트.
+#
+# ★ 왜 필요한가
+#   사이트 이름은 학교가 정한 말이고, 질문은 학생이 쓰는 말이다.
+#   '기숙사' 라고 묻는데 사이트 이름은 '생활관' 이라 글자가 하나도 안 겹친다.
+#   그래서 본부 문서가 이기고, 정작 생활관 안내가 밀렸다.
+#
+# ★ 여기 넣는 것은 '같은 것을 가리키는 다른 이름' 뿐이다
+#   비슷한 주제를 묶는 곳이 아니다. '장학금'을 아무 데나 연결하면
+#   그건 별칭이 아니라 추측이 된다.
+#
+# ★ 총학이 직접 늘려도 되는 파일이다
+#   학생이 실제로 쓰는 말은 우리가 제일 잘 안다. 코드를 고칠 필요 없다.
+
+aliases:
+  likehome.jbnu.ac.kr:
+    - 기숙사
+    - 생활관
+    - 호실
+    - 입사
+    - 입관
+    - 퇴관
+
+  dl.jbnu.ac.kr:
+    - 도서관
+    - 열람실
+    - 중앙도서관
+    - 학술정보관
+    - 대출
+
+  happycenter.jbnu.ac.kr:
+    - 심리상담
+    - 상담센터
+    - 행복드림
+    - 마음건강
+
+  fieldwork.jbnu.ac.kr:
+    - 현장실습
+    - 인턴십
+
+  graduate.jbnu.ac.kr:
+    - 대학원
+
+  startup.jbnu.ac.kr:
+    - 창업
+
+  ssac.jbnu.ac.kr:
+    - 삼성문화회관
+    - 공연장
+
+  museum.jbnu.ac.kr:
+    - 박물관
+
+  career.jbnu.ac.kr:
+    - 취업
+    - 진로
+    - 취업지원
+
+  fees.jbnu.ac.kr:
+    - 등록금
+    - 학비
+    - 납부
+
+  # 학과 — 학생이 줄여 부르는 말
+  csai.jbnu.ac.kr:
+    - 컴공
+    - 컴퓨터공학
+    - 컴퓨터공학부
+    - 컴퓨터공학과
+    - 인공지능학부
+  me.jbnu.ac.kr:
+    - 기계과
+    - 기계공학
+  ee.jbnu.ac.kr:
+    - 전기과
+    - 전기공학
+  business.jbnu.ac.kr:
+    - 경영과
+    - 경영학
+  nursing.jbnu.ac.kr:
+    - 간호과
+    - 간호학과
+  med.jbnu.ac.kr:
+    - 의대
+    - 의학과
+  dent.jbnu.ac.kr:
+    - 치대
+    - 치의학
+  pharmacy.jbnu.ac.kr:
+    - 약대
+  vetmed.jbnu.ac.kr:
+    - 수의대
+    - 수의학과
+  lawschool.jbnu.ac.kr:
+    - 로스쿨

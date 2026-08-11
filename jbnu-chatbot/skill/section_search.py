@@ -85,7 +85,9 @@ SITE_TOPIC_BOOST = 1.4
 # 정작 규정 원문이 밀려나는 것을 막는다.
 HQ_HOST = "www.jbnu.ac.kr"
 HQ_BOOST = 2.0
-SITES_PATH = pathlib.Path(__file__).resolve().parents[1] / "config" / "sites.yaml"
+_CFG = pathlib.Path(__file__).resolve().parents[1] / "config"
+SITES_PATH = _CFG / "sites.yaml"
+ALIASES_PATH = _CFG / "site_aliases.yaml"
 
 
 @functools.lru_cache(maxsize=1)
@@ -96,6 +98,25 @@ def site_names() -> dict[str, str]:
         doc = yaml.safe_load(SITES_PATH.read_text(encoding="utf-8"))
         return {h: v["name"] for h, v in (doc.get("sites") or {}).items()
                 if v.get("name")}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+@functools.lru_cache(maxsize=1)
+def site_aliases() -> dict[str, str]:
+    """별칭 → 호스트. 사이트 이름은 학교 말이고 질문은 학생 말이다.
+
+    '기숙사' 라고 묻는데 사이트 이름은 '생활관' 이라 글자가 하나도 안 겹친다.
+    그래서 본부 문서가 이기고 정작 생활관 안내가 밀렸다.
+    """
+    try:
+        import yaml
+        doc = yaml.safe_load(ALIASES_PATH.read_text(encoding="utf-8"))
+        out: dict[str, str] = {}
+        for host, names in (doc.get("aliases") or {}).items():
+            for n in names or []:
+                out[str(n).strip()] = host
+        return out
     except Exception:  # noqa: BLE001
         return {}
 
@@ -113,6 +134,11 @@ def match_site(utterance: str) -> tuple[str | None, str]:
             continue
         if name in utterance and len(name) > len(best_name):
             best_host, best_name = host, name
+    # 별칭도 본다. 정식 이름보다 짧아도 학생이 실제로 쓰는 말이다.
+    for alias, host in site_aliases().items():
+        if len(alias) >= 2 and alias in utterance and len(alias) > len(best_name):
+            best_host = host
+            best_name = site_names().get(host, alias)
     return best_host, best_name
 
 
@@ -270,7 +296,9 @@ def score_rows(rows: list[dict[str, Any]], tokens: Sequence[str],
             s *= HQ_BOOST
         # '취업 상담' 이면 '취업진로지원과' 가 '항공우주공학과' 보다 맞다.
         sname = site_names().get(host, "")
-        if sname and any(t in sname for t in matched):
+        topical = (sname and any(t in sname for t in matched)) or any(
+            site_aliases().get(t) == host for t in matched)
+        if topical:
             s *= SITE_TOPIC_BOOST
         hits.append(Hit(
             section_key=r["section_key"], page_url=r["page_url"], host=host,
@@ -308,15 +336,25 @@ def search(conn, utterance: str, *, repo) -> SearchResult:
         return SearchResult(Outcome.NO_DATA, query_tokens=tokens)
 
     site_host, site_label = match_site(utterance)
+    if site_host:
+        # ★ 사이트를 가리킨 낱말은 **어디**를 정했지 **무엇**을 정하지 않았다.
+        #   '기숙사 신청' 에서 '기숙사' 는 생활관 사이트를 뜻한다. 그 사이트 본문은
+        #   스스로를 '생활관' 이라 부르므로 '기숙사' 를 계속 요구하면 영영 못 찾는다.
+        used = {a for a, h in site_aliases().items() if h == site_host}
+        used |= {site_label}
+        narrowed = [t for t in tokens if not any(u and u in t for u in used)]
+        if narrowed:          # 다 지워지면 원래 질의를 그대로 쓴다
+            tokens = narrowed
     df = {t: repo.token_doc_freq(conn, t) for t in tokens}
-    # ★ 질문의 뜻을 지고 있는 낱말은 **가장 드문 것** 하나다.
+    # ★ 질문의 뜻을 지고 있는 낱말 하나를 고른다.
     #   '재수강 규정' 의 뜻은 '재수강' 에 있지 '규정' 에 있지 않다.
-    #   문서가 '규정' 이라는 말을 안 썼다고 틀린 답이 아니다.
-    #   흔한 낱말까지 다 요구하면 동의어를 쓰는 정답이 전부 죽는다.
-    core = min(tokens, key=lambda t: (df.get(t, 0), -len(t)))
+    #   드문 정도만 보면 '등록금 납부 기간' 에서 '기간' 이 뽑힌다 —
+    #   드물지만 아무 뜻도 없는 말이다. 그래서 점수 가중치를 그대로 쓴다
+    #   (드문 정도 × 낱말 길이). 순위를 매길 때 믿는 값을 여기서도 믿는다.
+    weights = _weights(tokens, total, df)
+    core = max(tokens, key=lambda t: weights.get(t, 0.0))
     rows = repo.search_sections(conn, tokens, host=site_host)
-    hits = score_rows(rows, tokens, _weights(tokens, total, df),
-                      hq_boost=site_host is None)
+    hits = score_rows(rows, tokens, weights, hq_boost=site_host is None)
     hits = _dedupe_by_page(hits)
 
     result = SearchResult(Outcome.NOT_FOUND, query_tokens=tokens,
