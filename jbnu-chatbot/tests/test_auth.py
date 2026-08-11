@@ -72,8 +72,14 @@ def test_health는_공개지만_운영정보를_안_담는다(client):
     r = client.get("/health")
     assert r.status_code == 200
     body = r.json()
-    assert body == {"ok": True}
-    for leak in ("meal_service", "scheduler", "sources", "last_tick"):
+    # ★ 정확 일치가 아니라 '무엇이 새면 안 되는가' 로 잰다.
+    #   warm 은 규모가 아니라 상태다 — '떴다' 와 '답할 준비가 됐다' 는 다르고,
+    #   배포 확인에 필요하다. 반면 아래 것들은 서비스 내부를 알려준다.
+    assert set(body) <= {"ok", "warm"}
+    assert body["ok"] is True
+    assert isinstance(body["warm"], bool)
+    for leak in ("meal_service", "scheduler", "sources", "last_tick",
+                 "sections", "db_path", "error"):
         assert leak not in body
 
 

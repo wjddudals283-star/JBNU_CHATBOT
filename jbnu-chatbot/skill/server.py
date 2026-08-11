@@ -23,6 +23,8 @@ import os
 import pathlib
 import re
 import sqlite3
+import time
+from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import Depends, FastAPI, Request
@@ -115,15 +117,67 @@ def create_app(db_path: pathlib.Path | None = None, *,
                   openapi_url=None, docs_url=None, redoc_url=None)
     app.state.db_path = db_path or DB_PATH
     app.state.scheduler = None
+    app.state.warm = None          # None=아직 · dict=끝남
 
     def conn() -> sqlite3.Connection:
         return repo.connect(app.state.db_path)
 
+    def _warmup() -> dict:
+        """첫 학생이 침묵을 겪지 않게 미리 한 번 돌려 본다.
+
+        ★ 실측한 증상
+          배포 직후 첫 요청 5.001초 무응답, 두 번째 0.26초.
+          카카오 스킬 타임아웃이 5초라 **첫 요청은 반드시 죽는다.**
+
+        ★ 두 가지가 겹쳐 있었다
+          1. 락 대기 — 배포하면 스케줄러가 밀린 수집을 즉시 시작하고,
+             그 쓰기를 첫 요청이 기다렸다. 5.000초는 sqlite 기본 busy timeout 이다.
+             → 답변 경로를 읽기 전용 연결로 바꿔서 아예 안 기다리게 했다.
+          2. 첫 질의 비용 — 모듈 로딩·FTS 인덱스 첫 접근.
+             → 여기서 미리 치른다.
+
+        실패해도 서버는 뜬다. 워밍업은 편의지 기동의 조건이 아니다.
+        """
+        t0 = time.monotonic()
+        out: dict = {"ok": False}
+        try:
+            c = repo.connect(app.state.db_path, readonly=True)
+            try:
+                out["sections"] = repo.section_total(c)
+                # 진짜 질의를 한 번 태운다. COUNT 만으로는 FTS 가 안 데워진다.
+                section_search.search(c, "휴학", repo=repo)
+                out["ok"] = True
+            finally:
+                c.close()
+        except Exception as e:  # noqa: BLE001
+            out["error"] = f"{type(e).__name__}: {e}"[:200]
+        out["ms"] = round((time.monotonic() - t0) * 1000)
+        app.state.warm = out
+        log.info("[warmup] %s (%sms) sections=%s",
+                 "ok" if out["ok"] else out.get("error"), out["ms"],
+                 out.get("sections"))
+        return out
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        # ★ 스케줄러보다 **먼저** 데운다.
+        #   스케줄러가 기동 즉시 수집을 시작하므로, 순서가 반대면
+        #   워밍업 자신이 락을 기다리게 된다.
+        _warmup()
+        s = app.state.scheduler
+        if s is not None:
+            s.start()
+        try:
+            yield
+        finally:
+            if s is not None:
+                s.stop()
+
+    app.router.lifespan_context = lifespan
+
     # ★ 스케줄러를 웹 서비스 안에서 돌린다.
     #   Render 는 Cron Job 에 디스크를 못 붙여서 별도 서비스가 같은 SQLite 를 못 본다.
     if with_scheduler if with_scheduler is not None else _scheduler_enabled():
-        from contextlib import asynccontextmanager
-
         from crawler import loop as loop_mod
         # ★ 스모크는 with_scheduler 플래그가 아니라 **환경변수**를 따른다.
         #   테스트는 with_scheduler=True 를 명시적으로 주지만 RUN_SCHEDULER 는 없다.
@@ -131,24 +185,19 @@ def create_app(db_path: pathlib.Path | None = None, *,
         #   프로덕션(RUN_SCHEDULER=1)에서만 켜져야 한다.
         app.state.scheduler = loop_mod.SchedulerLoop(smoke=_scheduler_enabled())
 
-        @asynccontextmanager
-        async def lifespan(_app: FastAPI):
-            app.state.scheduler.start()
-            try:
-                yield
-            finally:
-                app.state.scheduler.stop()
-
-        app.router.lifespan_context = lifespan
-
     @app.get("/health")
     def health() -> dict:
         """공개. Render 헬스체크가 부른다.
 
         ★ 여기에는 운영 정보를 담지 않는다. 살아 있다는 사실만 알린다.
           상세는 /admin/status (인증 필요).
+
+        ★ warm 만 예외로 낸다 — 규모가 아니라 상태다
+          '떴다' 와 '답할 준비가 됐다' 는 다르다. 배포 확인할 때
+          이걸 못 보면 첫 학생이 대신 확인해 주게 된다.
         """
-        return {"ok": True}
+        w = app.state.warm
+        return {"ok": True, "warm": bool(w and w.get("ok"))}
 
     @app.get("/admin/status", dependencies=[Depends(auth.require_token)])
     def status() -> dict:
@@ -169,6 +218,7 @@ def create_app(db_path: pathlib.Path | None = None, *,
                 "ok": True, "meal_service": n,
                 "now_kst": now.isoformat(),
                 "scheduler": None if s is None else s.status(),
+                "warmup": app.state.warm,
                 # 원천별 마지막 성공. 백필이 조용히 멈춘 걸 여기서 잡는다.
                 "sources": fresh,
                 "stale_sources": [f["source_key"] for f in fresh if f["stale"]],
@@ -373,7 +423,7 @@ def _handle_notice(db_path: pathlib.Path, utterance: str) -> dict:
     본문을 안 읽었으므로 내용을 아는 척하지 않는다.
     '이런 공지가 있고 여기서 볼 수 있다' 까지가 우리가 아는 전부다.
     """
-    conn = repo.connect(db_path)
+    conn = repo.connect(db_path, readonly=True)
     try:
         result = section_search.search_notices(conn, utterance, repo=repo)
     finally:
@@ -392,7 +442,7 @@ def _handle_section(db_path: pathlib.Path, utterance: str, *,
     발화에는 찾았을 때만 답하고, 못 찾으면 폴백에 넘긴다.
     못 찾은 걸 여기서 받아치면 인사말에도 '안내를 찾지 못했어요' 가 나간다.
     """
-    conn = repo.connect(db_path)
+    conn = repo.connect(db_path, readonly=True)
     try:
         result = section_search.search(conn, utterance, repo=repo)
     finally:
@@ -438,7 +488,7 @@ def _handle_upcoming(db_path: pathlib.Path, params: dict, detail: dict,
     days = _resolve_days(params, utterance)
     until = (now.date() + dt.timedelta(days=days)).isoformat()
 
-    conn = repo.connect(db_path)
+    conn = repo.connect(db_path, readonly=True)
     try:
         rows = repo.query_calendar(conn, since=today, until=until)
         # 신선도 — 학사일정은 자주 안 바뀌지만 크롤이 멈춘 걸 숨기면 안 된다.
@@ -465,7 +515,7 @@ def _handle_calendar_item(db_path: pathlib.Path, utterance: str, *,
     since = (today - dt.timedelta(days=ITEM_SEARCH_BACK_DAYS)).isoformat()
     until = (today + dt.timedelta(days=ITEM_SEARCH_AHEAD_DAYS)).isoformat()
 
-    conn = repo.connect(db_path)
+    conn = repo.connect(db_path, readonly=True)
     try:
         rows = repo.query_calendar(conn, since=since, until=until, limit=500)
     finally:
@@ -522,7 +572,7 @@ def _handle_meal(db_path: pathlib.Path, params: dict, detail: dict,
         return _handle_overview(db_path, date=date, meal_type=meal_type, now=now)
 
     # ── 3. 온톨로지 조회 + 게이트 ──
-    conn = repo.connect(db_path)
+    conn = repo.connect(db_path, readonly=True)
     try:
         answer = branch.resolve_meal(conn, facility_id=facility_id, date=date,
                                      meal_type=meal_type, now=now)
@@ -550,7 +600,7 @@ def _handle_overview(db_path: pathlib.Path, *, date: str, meal_type: str,
     폴백("답변할 자료가 준비되지 않았어요")으로 보내면 안 된다.
     자료는 있고 어느 식당인지만 모르는 상태다.
     """
-    conn = repo.connect(db_path)
+    conn = repo.connect(db_path, readonly=True)
     try:
         rows = []
         for fid in aliases.all_facility_ids():

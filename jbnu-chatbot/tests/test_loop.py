@@ -214,7 +214,7 @@ def test_스케줄러_상태는_인증_뒤에서_보고된다(tmp_path, monkeypa
     app = server.create_app(tmp_path / "y.db", with_scheduler=True)
     with TestClient(app) as client:
         public = client.get("/health").json()
-        assert public == {"ok": True}
+        assert set(public) <= {"ok", "warm"} and public["ok"] is True
         assert client.get("/admin/status").status_code == 401
         body = client.get("/admin/status",
                           headers={auth.HEADER_NAME: token}).json()

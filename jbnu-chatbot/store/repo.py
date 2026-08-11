@@ -62,12 +62,35 @@ MEAL_TYPE_FROM_SOURCE: dict[str, str] = {
 # 연결
 # ═══════════════════════════════════════════════════════════════
 
-def connect(db_path: str | pathlib.Path = ":memory:") -> sqlite3.Connection:
+# 답변 경로가 락을 기다릴 수 있는 최대 시간.
+# ★ 카카오 스킬 타임아웃이 5초다. 우리가 5초를 기다리면 학생은 침묵을 받는다.
+#   기다리다 죽느니 1.5초에 포기하고 "잠시 후 다시" 를 말하는 게 낫다.
+READ_BUSY_MS = 1500
+
+
+def connect(db_path: str | pathlib.Path = ":memory:", *,
+            readonly: bool = False) -> sqlite3.Connection:
     """SQLite 연결.
 
     ★ SQLite 는 외래키가 연결마다 기본 OFF 다. 끄고 쓰면 REFERENCES 가
       주석이나 다름없어진다. 여기서 반드시 켠다.
+
+    ★ readonly=True — 답변 경로용. 이게 없어서 콜드 스타트가 죽었다
+      실측: 배포 직후 첫 요청이 정확히 5.001초 무응답, 두 번째는 0.26초.
+      5.000초는 sqlite3.connect() 의 기본 busy timeout 이다 — 우연이 아니었다.
+      배포하면 스케줄러가 밀린 수집을 즉시 시작하고(crawler/loop.py),
+      그 쓰기 락을 첫 학생이 기다린 것이다.
+
+      WAL 에서 읽기는 쓰기를 안 기다린다. 그런데 우리는 연결할 때마다
+      `PRAGMA journal_mode = WAL` 을 실행했다 — **그게 쓰기 연산이다.**
+      읽기 전용 연결은 그걸 건드리지 않는다. 파일도 ro 로 연다.
     """
+    if readonly and str(db_path) != ":memory:" and pathlib.Path(db_path).exists():
+        uri = "file:" + pathlib.Path(db_path).resolve().as_posix() + "?mode=ro"
+        conn = sqlite3.connect(uri, uri=True, timeout=READ_BUSY_MS / 1000)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON")
+        return conn          # ★ journal_mode 를 건드리지 않는다
     conn = sqlite3.connect(str(db_path))
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
