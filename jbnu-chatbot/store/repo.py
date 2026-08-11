@@ -1381,3 +1381,28 @@ def demand_weighted_coverage(rows: list[dict]) -> dict:
         "weakest": {"label": worst["label"], "weight": worst["weight"],
                     "covered_ratio": worst["covered_ratio"]},
     }
+
+
+def crawl_progress(conn: sqlite3.Connection, source_key: str = "jbnu_pages",
+                   *, total_hint: int | None = None) -> dict:
+    """마지막 수집이 **완주했는지 중단됐는지**.
+
+    ★ 이게 없으면 '도는 중' 과 '죽었음' 이 같은 모양이다.
+      실제로 배포가 잦은 날 세 번 다 중단됐는데 20분 동안 아무도 몰랐다.
+      침묵이 가장 위험하다.
+    """
+    r = conn.execute(
+        """SELECT id, started_at, finished_at, outcome, items_parsed
+             FROM crawl_run WHERE source_key = ?
+            ORDER BY started_at DESC LIMIT 1""", (source_key,)).fetchone()
+    if r is None:
+        return {"state": "없음", "detail": "이 작업이 한 번도 안 돌았다"}
+    done = r["items_parsed"] or 0
+    if r["finished_at"]:
+        return {"state": "완주", "started_at": r["started_at"],
+                "finished_at": r["finished_at"], "pages": done}
+    # 끝난 기록이 없다 = 도는 중이거나 죽은 것. 둘을 시각으로 가른다.
+    return {"state": "미완주", "started_at": r["started_at"],
+            "pages_done": done, "pages_total": total_hint,
+            "detail": ("아직 도는 중이거나 중간에 멈췄다. "
+                       "started_at 이 오래됐으면 멈춘 것이다.")}

@@ -156,6 +156,10 @@ def judge(q: str, expect: str, must: str, r) -> tuple[str, str]:
     if hasattr(top, "quote_text"):
         quote = top.quote_text or top.text
         where = top.quote_path or ""
+        # 페이지 단위로 답할 때 우리가 주장하는 것은 '이 문서에 있다' 이지
+        # '이 문단이 답이다' 가 아니다. 그러면 문서 제목으로 채점해야 맞다.
+        if getattr(r, "page_level", False):
+            where = f"{where} {top.page_title}"
     else:                                   # 공지 — 제목만 본다
         quote, where = top.title, top.board_name or ""
     if must and must not in quote and must not in where:

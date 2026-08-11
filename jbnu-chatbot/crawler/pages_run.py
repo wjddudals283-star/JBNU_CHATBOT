@@ -122,9 +122,108 @@ def _empty_blocks(sections) -> int:
                if s.kind == "block" and len(s.text) < EMPTY_BLOCK_CHARS)
 
 
+CHUNK_SIZE = 400
+# 재시작했을 때 이 시간 안에 이미 다녀온 페이지는 건너뛴다.
+# 하루 1회 도는 작업이라 20시간이면 '이번 회차에 이미 했다' 는 뜻이 된다.
+RESUME_WITHIN_HOURS = 20.0
+
+
+def _process_chunk(rows, *, conn, stamp, delay, site_names):
+    """묶음 하나를 **끝까지** 처리한다 — 받고, 조각 세고, 파싱하고, 저장까지.
+
+    ★ 전부 받은 뒤에 저장하면 중간에 죽었을 때 아무것도 안 남는다.
+      배포가 잦은 날 세 번 다 처음부터 다시 시작했고, 50분짜리 작업이
+      영영 안 끝났다. 묶음마다 커밋한다.
+    """
+    html: dict[str, str] = {}
+    fetch_fail: dict[str, tuple] = {}
+    with httpx.Client(timeout=30.0, verify=fetch_mod.lax_ssl(),
+                      follow_redirects=True, headers={"User-Agent": UA}) as c:
+        for r in rows:
+            try:
+                resp = c.get(r["url"])
+                if resp.status_code != 200:
+                    fetch_fail[r["url"]] = (resp.status_code,
+                                            f"HTTP {resp.status_code}")
+                else:
+                    html[r["url"]] = resp.text
+            except Exception as e:  # noqa: BLE001
+                fetch_fail[r["url"]] = (None, f"{type(e).__name__}: {e}"[:200])
+            time.sleep(delay)
+
+    # CMS 마다 따로 센다. 섞으면 한쪽 템플릿이 다른 쪽 페이지 수에 희석된다.
+    by_profile: dict[str, list] = {}
+    page_profile: dict[str, str] = {}
+    for u, h in html.items():
+        try:
+            key, frags = SV.fragments_with_profile(
+                h, up.urlsplit(u).hostname or "")
+            page_profile[u] = key
+            by_profile.setdefault(key, []).append(frags)
+        except Exception:  # noqa: BLE001
+            pass
+    reports = {k: bp.detect(v) for k, v in by_profile.items()}
+
+    tally = {k: 0 for k in repo.PARSE_STATUSES}
+    sections = notices = boards = 0
+    for r in rows:
+        u = r["url"]
+        common = {"page_url": u, "host": r["host"], "path": r["path"],
+                  "kind": r["kind"], "discovered_at": stamp,
+                  "last_attempt_at": stamp}
+        if u in fetch_fail:
+            code, msg = fetch_fail[u]
+            repo.upsert_page(conn, parse_status="fetch_error",
+                             http_status=code, error_message=msg, **common)
+            tally["fetch_error"] += 1
+            continue
+
+        # 이미 받아온 원문으로 게시판도 같이 읽는다 — 두 번 두드릴 이유가 없다.
+        if NL.is_board_page(html[u]):
+            nl = NL.parse(html[u], page_url=u)
+            if nl.items:
+                notices += repo.replace_notices(
+                    conn, board_url=u, items=nl.items, host=r["host"],
+                    board_name=nl.board_name,
+                    site_name=site_names.get(r["host"], ""), observed_at=stamp)
+                boards += 1
+
+        try:
+            res = SV.parse(html[u], page_url=u,
+                           boilerplate_report=reports.get(page_profile.get(u)))
+        except Exception as e:  # noqa: BLE001
+            repo.upsert_page(conn, parse_status="parse_error", http_status=200,
+                             error_message=f"{type(e).__name__}: {e}"[:200],
+                             **common)
+            tally["parse_error"] += 1
+            continue
+
+        chars = _content_chars(res.sections)
+        status = "ok" if chars >= MIN_CONTENT_CHARS else "empty"
+        note = ("HTML 에 본문이 없다 (스크립트로 그리는 페이지일 수 있음)"
+                if status == "empty" else None)
+        repo.upsert_page(
+            conn, parse_status=status, http_status=200,
+            last_success_at=stamp if status == "ok" else None,
+            section_count=len(res.sections), leaf_count=len(res.leaves),
+            table_count=sum(1 for x in res.sections if x.kind == "table"),
+            empty_block_count=_empty_blocks(res.sections),
+            content_chars=chars, pruned_nodes=res.pruned.get("pruned", 0),
+            last_modified=res.last_modified, title=res.title,
+            note=note, **common)
+        sections += repo.replace_sections(
+            conn, page_url=u, sections=res.sections, observed_at=stamp,
+            page_last_modified=res.last_modified)
+        tally[status] += 1
+
+    conn.commit()          # ★ 묶음이 끝날 때마다 남긴다
+    return tally, sections, boards, notices
+
+
 def run(db_path: str, *, limit: int | None = None, delay: float = DEFAULT_DELAY,
         now: dt.datetime | None = None, verbose: bool = True,
-        only_status: tuple[str, ...] | None = None) -> dict:
+        only_status: tuple[str, ...] | None = None,
+        resume: bool = True) -> dict:
     """only_status 를 주면 그 상태인 페이지만 다시 돈다.
 
     파서를 고쳤다고 5,764곳을 또 두드리지 않는다. 우리는 손님이다.
@@ -144,146 +243,77 @@ def run(db_path: str, *, limit: int | None = None, delay: float = DEFAULT_DELAY,
     if verbose:
         print(f"대상 {len(rows)}페이지 · 간격 {delay}s · 동시성 1")
 
-    # ---- 1차: 가져오고 조각을 센다 -------------------------------------
-    html: dict[str, str] = {}
-    fetch_fail: dict[str, tuple[int | None, str]] = {}
-    frag_pages: list[dict] = []
-    frag_fail: dict[str, str] = {}
-
-    with httpx.Client(timeout=30.0, verify=fetch_mod.lax_ssl(),
-                      follow_redirects=True, headers={"User-Agent": UA}) as c:
-        for i, r in enumerate(rows, 1):
-            try:
-                resp = c.get(r["url"])
-                if resp.status_code != 200:
-                    fetch_fail[r["url"]] = (resp.status_code,
-                                            f"HTTP {resp.status_code}")
-                else:
-                    html[r["url"]] = resp.text
-            except Exception as e:  # noqa: BLE001
-                fetch_fail[r["url"]] = (None, f"{type(e).__name__}: {e}"[:200])
-            if verbose and i % 25 == 0:
-                print(f"  …{i}/{len(rows)} 수집")
-            time.sleep(delay)
-
-    # ★ CMS 마다 따로 센다. 섞으면 한쪽 템플릿이 다른 쪽 페이지 수에 희석돼
-    #   임계를 못 넘는다. 본부 204 : 학과 5,560 이면 본부 템플릿은 영영 안 걸린다.
-    by_profile: dict[str, list[dict]] = {}
-    page_profile: dict[str, str] = {}
-    for u, h in html.items():
-        try:
-            key, frags = SV.fragments_with_profile(h, up.urlsplit(u).hostname or "")
-            page_profile[u] = key
-            by_profile.setdefault(key, []).append(frags)
-        except Exception as e:  # noqa: BLE001
-            frag_fail[u] = f"{type(e).__name__}: {e}"[:200]
-
-    reports = {k: bp.detect(v) for k, v in by_profile.items()}
-    frag_pages = [f for v in by_profile.values() for f in v]
     if verbose:
-        for key, report in reports.items():
-            print(f"\n[{key}] 템플릿 조각 {len(report.hashes)}종 "
-                  f"(임계 {report.threshold_pages}/{report.total_pages}페이지) "
-                  f"{report.skipped_reason}")
-            for d in report.detail[:4]:
-                print(f"    {d['pages']:4} ({d['ratio']:.0%})  {d['sample'][:56]!r}")
-            if report.borderline:
-                print(f"  경계선 {len(report.borderline)}종 — 임계가 흔들리면 여기서 먼저 보인다")
-                for d in report.borderline[:2]:
-                    print(f"    {d['pages']:4} ({d['ratio']:.0%})  {d['sample'][:56]!r}")
+        print(f"대상 {len(rows)}페이지 · 간격 {delay}s · 묶음 {CHUNK_SIZE}")
 
-    # ---- 2차: 잘라내고 파싱해서 기록 -----------------------------------
-    tally = {s: 0 for s in repo.PARSE_STATUSES}
-    total_sections = 0
-    notices = boards = 0
-    site_names = _site_names()
     conn = repo.connect(db_path)
+    site_names = _site_names()
+    tally = {k: 0 for k in repo.PARSE_STATUSES}
+    total_sections = notices = boards = 0
+    run_id = f"pages-{stamp}"
     try:
-        for r in rows:
-            u = r["url"]
-            common = {"page_url": u, "host": r["host"], "path": r["path"],
-                      "kind": r["kind"], "discovered_at": stamp,
-                      "last_attempt_at": stamp}
+        repo.ensure_columns(conn)
+        # ★ 재시작이면 이미 다녀온 곳은 건너뛴다.
+        #   배포가 잦으면 매번 처음부터라 영영 안 끝난다 — 실제로 그랬다.
+        if resume:
+            cutoff = (now - dt.timedelta(hours=RESUME_WITHIN_HOURS)).isoformat()
+            done = {r[0] for r in conn.execute(
+                "SELECT page_url FROM page_registry WHERE last_attempt_at >= ?",
+                (cutoff,))}
+            before = len(rows)
+            rows = [r for r in rows if r["url"] not in done]
+            if before != len(rows):
+                log.info("[pages] 이어서: %s페이지 건너뜀, 남은 %s",
+                         before - len(rows), len(rows))
+                if verbose:
+                    print(f"  이어서: {before - len(rows)}페이지는 최근 "
+                          f"{RESUME_WITHIN_HOURS:.0f}h 안에 다녀왔다 → 건너뜀. "
+                          f"남은 {len(rows)}")
 
-            if u in fetch_fail:
-                code, msg = fetch_fail[u]
-                repo.upsert_page(conn, parse_status="fetch_error",
-                                 http_status=code, error_message=msg, **common)
-                tally["fetch_error"] += 1
-                continue
-
-            # ★ 이미 받아온 원문으로 게시판도 같이 읽는다.
-            #   공지 때문에 6,769페이지를 다시 받는 것은 낭비이고,
-            #   같은 페이지를 하루에 두 번 두드리는 것은 손님의 도리가 아니다.
-            if NL.is_board_page(html[u]):
-                nl = NL.parse(html[u], page_url=u)
-                if nl.items:
-                    notices += repo.replace_notices(
-                        conn, board_url=u, items=nl.items, host=r["host"],
-                        board_name=nl.board_name,
-                        site_name=site_names.get(r["host"], ""),
-                        observed_at=stamp)
-                    boards += 1
-
-            try:
-                res = SV.parse(html[u], page_url=u,
-                               boilerplate_report=reports.get(page_profile.get(u)))
-            except Exception as e:  # noqa: BLE001
-                repo.upsert_page(conn, parse_status="parse_error", http_status=200,
-                                 error_message=f"{type(e).__name__}: {e}"[:200],
-                                 **common)
-                tally["parse_error"] += 1
-                continue
-
-            chars = _content_chars(res.sections)
-            status = "ok" if chars >= MIN_CONTENT_CHARS else "empty"
-            note = None
-            if status == "empty":
-                # 파싱은 됐다. 구조가 깨진 게 아니라 원문에 알맹이가 없다.
-                note = "HTML 에 본문이 없다 (스크립트로 그리는 페이지일 수 있음)"
-
-            repo.upsert_page(
-                conn, parse_status=status, http_status=200,
-                last_success_at=stamp if status == "ok" else None,
-                section_count=len(res.sections), leaf_count=len(res.leaves),
-                table_count=sum(1 for s in res.sections if s.kind == "table"),
-                empty_block_count=_empty_blocks(res.sections),
-                content_chars=chars, pruned_nodes=res.pruned.get("pruned", 0),
-                last_modified=res.last_modified, title=res.title,
-                note=note, **common)
-            total_sections += repo.replace_sections(
-                conn, page_url=u, sections=res.sections, observed_at=stamp,
-                page_last_modified=res.last_modified)
-            tally[status] += 1
+        repo.start_crawl(conn, run_id=run_id, source_key="jbnu_pages",
+                         started_at=stamp)
         conn.commit()
+
+        total = len(rows)
+        for start in range(0, total, CHUNK_SIZE):
+            chunk = rows[start:start + CHUNK_SIZE]
+            t, sec, brd, ntc = _process_chunk(
+                chunk, conn=conn, stamp=stamp, delay=delay,
+                site_names=site_names)
+            for k, v in t.items():
+                tally[k] += v
+            total_sections += sec
+            boards += brd
+            notices += ntc
+            done_n = min(start + CHUNK_SIZE, total)
+            # ★ 완주했는지 중단됐는지 알 수 있어야 한다. 침묵이 가장 위험하다.
+            conn.execute("UPDATE crawl_run SET items_parsed = ? WHERE id = ?",
+                         (done_n, run_id))
+            conn.commit()
+            log.info("[pages] 진행 %s/%s (ok %s, empty %s, error %s)",
+                     done_n, total, tally["ok"], tally["empty"],
+                     tally["parse_error"] + tally["fetch_error"])
+            if verbose:
+                print(f"  [pages] 진행 {done_n}/{total}")
+
         repo.mark_boards(conn)
+        repo.finish_crawl(conn, run_id, outcome="success",
+                          finished_at=dt.datetime.now(KST).isoformat(),
+                          items_parsed=total)
+        conn.commit()
         summary = repo.coverage_summary(conn)
+        log.info("[pages] DONE %s pages, indexed %s",
+                 total, summary["indexed_leaves"])
     finally:
         conn.close()
 
     if verbose:
-        print(f"\n{'상태':14}{'페이지':>8}")
-        for s, n in tally.items():
+        print()
+        for k, n in tally.items():
             if n:
-                print(f"  {s:12}{n:>8}")
+                print(f"  {k:12}{n:>8}")
         print(f"  섹션 {total_sections} · 색인 잎 {summary['indexed_leaves']}")
-        print(f"  게시판 {boards}곳 · 공지 {notices}건 (같은 원문으로 함께 읽음)")
+        print(f"  게시판 {boards}곳 · 공지 {notices}건")
         print(f"  답변 가능 비율 {summary['answerable_ratio']:.1%}")
     return {"tally": tally, "sections": total_sections, "summary": summary,
-            "boards": boards, "notices": notices,
-            "boilerplate": report.summary()}
-
-
-def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--db", default="data/jbnu.db")
-    ap.add_argument("--limit", type=int, default=None)
-    ap.add_argument("--delay", type=float, default=DEFAULT_DELAY)
-    args = ap.parse_args(argv)
-    logging.basicConfig(level=logging.INFO, format="%(message)s")
-    run(args.db, limit=args.limit, delay=args.delay)
-    return 0
-
-
-if __name__ == "__main__":
-    sys.exit(main())
+            "boards": boards, "notices": notices, "pages": total}

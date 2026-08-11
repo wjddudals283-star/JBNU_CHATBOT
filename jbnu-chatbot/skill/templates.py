@@ -454,6 +454,7 @@ def render_fallback() -> dict:
 # ★ 경로를 붙인다. 답에 질문 대상이 없으면 학생이 판단할 수 없다.
 
 QUOTE_BUDGET = 700          # 인용 본문에 쓸 최대 글자 (simpleText 1000 안에서)
+PAGE_LEVEL_BUDGET = 420     # 페이지로 답할 때 맛보기로 보여줄 글자
 SEARCH_HINT = "총학생회에 직접 물어보면 확인해 드릴게요."
 
 
@@ -549,6 +550,24 @@ def render_section(result, *, utterance: str = "") -> dict:
                               [kakao.quick_reply("처음으로")])
 
     hit = result.top
+
+    # ★ 섹션을 못 고르겠으면 고르지 않는다 — 한 단계 올라간다.
+    #   틀린 문단을 확신 있게 인용하는 것보다 맞는 페이지를 통째로 보여주는 게 낫다.
+    #   학생이 스스로 찾을 수 있으니까. '애매하면 고르지 않는다' 의 적용은
+    #   침묵만이 아니다.
+    if getattr(result, "page_level", False):
+        where = f"{hit.site_name} · {hit.page_title}" if hit.site_name else hit.page_title
+        head, _ = _quote_block(hit)
+        lines = [f"'{subject}' 는 이 문서에 있어요.", "", f"📄 {where}"]
+        via = getattr(result, "via_synonym", "")
+        if via:
+            lines.append(f"('{via}' 라는 이름으로 올라와 있어요)")
+        lines += ["", f"[{hit.quote_path or hit.path}]", head[:PAGE_LEVEL_BUDGET]]
+        lines += ["", "어느 부분인지 딱 집지는 못했어요. 아래에서 확인해 주세요.",
+                  hit.page_url]
+        return kakao.response([kakao.simple_text("\n".join(lines))],
+                              [kakao.quick_reply("처음으로")])
+
     quote, clipped = _quote_block(hit)
     lines = [f"[{hit.quote_path or hit.path}]"]
     # ★ 다른 이름으로 찾았으면 그 사실을 밝힌다.

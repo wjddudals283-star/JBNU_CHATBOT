@@ -236,6 +236,9 @@ def create_app(db_path: pathlib.Path | None = None, *,
             #   수요가 높은데 커버가 낮은 도메인이 진짜 구멍이다.
             by_domain = repo.coverage_by_domain(c)
             weighted = repo.demand_weighted_coverage(by_domain)
+            # ★ 완주했는지 중단됐는지. '도는 중' 과 '죽었음' 이 같은 모양이면 안 된다.
+            progress = repo.crawl_progress(c, "jbnu_pages",
+                                           total_hint=summary["total_pages"])
         finally:
             c.close()
         # '왜 못 하는가' 를 상태별로 갈라 준다. 다 '모른다' 로 뭉치면 고칠 수 없다.
@@ -248,8 +251,9 @@ def create_app(db_path: pathlib.Path | None = None, *,
             "not_attempted": "발견만 하고 아직 시도 안 함",
             "skipped": "대상 아님",
         }
-        return {**summary, **weighted, "by_domain": by_domain,
-                "status_meaning": meaning, "gaps": gaps}
+        return {**summary, **weighted, "last_crawl": progress,
+                "by_domain": by_domain, "status_meaning": meaning,
+                "gaps": gaps}
 
     # ★ 총학이 직접 넣은 답의 상태. 만료·미확인을 여기서 본다.
     #   만료된 뒤에 아는 것은 늦으므로 30일 전에 미리 알린다.

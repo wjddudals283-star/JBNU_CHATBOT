@@ -61,12 +61,16 @@ MIN_SCORE = 1.2
 #   그래서 사이트가 갈릴 때만 답을 보류한다.
 AMBIGUOUS_RATIO = 0.70
 MAX_CANDIDATES = 5
-PATH_BOOST = 1.6          # 경로(제목)에서 맞으면 본문보다 무겁게 본다
-# ★ 문서 제목을 점수에 넣어 봤다가 **되돌렸다**.
-#   순위는 정확해졌지만(자퇴 1등, 조기졸업 1등) 확신 오답이 0 → 2 로 늘었다.
-#   제목이 맞는다고 그 섹션이 답인 것은 아니다 — 한 페이지의 모든 섹션이
-#   제목 점수를 똑같이 받아서, 그 안에서 엉뚱한 문단이 1등이 됐다.
-#   섹션 단위로 다시 걸러낼 방법을 찾기 전에는 넣지 않는다.
+PATH_BOOST = 1.6          # 경로에서 맞으면 본문보다 무겁게 본다
+# ★ 문서 제목은 **페이지 순위에만** 쓴다. 섹션 선택에는 쓰지 않는다.
+#   한 페이지의 모든 섹션이 제목 점수를 똑같이 받으면, 그 안에서 엉뚱한 문단이
+#   1등이 된다 — 처음에 그렇게 넣었다가 확신 오답이 0 → 2 로 늘었다.
+#   '어느 문서인가' 와 '그 안 어디인가' 는 다른 질문이고, 다른 근거를 쓴다.
+TITLE_BOOST = 2.4
+# 섹션 1등이 2등보다 이만큼 앞서야 그 섹션을 인용한다.
+# 못 미치면 고르지 않고 **페이지 단위로** 답한다 —
+# 틀린 문단을 확신 있게 인용하는 것보다 맞는 페이지를 통째로 보여주는 게 낫다.
+SECTION_MARGIN = 1.5
 PATH_ALL_BOOST = 2.2      # 질문의 낱말이 경로에 **전부** 있으면 그게 그 문서다
 # 낱말이 멀리 떨어져 있으면 같은 이야기가 아니다.
 # '휴학' 과 '신청' 이 한 문단 양 끝에 있다고 휴학 신청 안내는 아니다.
@@ -227,6 +231,7 @@ class Hit:
     site_name: str = ""       # 어느 학과·기관 사이트인가
     quote_text: str = ""      # 인용 단위 — 부모 블록·표 전체
     quote_path: str = ""      # 인용 블록의 경로 — 화면에 보여줄 것
+    page_score: float = 0.0   # 페이지 순위용 (제목 가산 포함)
     page_modified: str | None = None
     observed_at: str = ""
     score: float = 0.0
@@ -243,6 +248,8 @@ class SearchResult:
     site_name: str = ""
     missing_tokens: list[str] = field(default_factory=list)  # 못 찾은 낱말
     via_synonym: str = ""     # 다른 이름으로 찾았으면 그 이름 (답에 밝힌다)
+    page_level: bool = False  # 섹션을 못 고르겠어서 페이지 단위로 답한다
+    section_margin: float = 0.0
     defer_reason: str = ""    # 왜 보류했나 — 진단용. 조용히 접으면 못 고친다
 
     @property
@@ -347,6 +354,10 @@ def score_rows(rows: list[dict[str, Any]], tokens: Sequence[str],
         if r.get("kind") == "table_row" and not any(t in path for t in matched):
             s *= TABLE_OFFTOPIC_PENALTY
 
+        # ★ 제목 가산은 **페이지 점수**에만 얹는다. 섹션 점수(s)는 건드리지 않는다.
+        title = r.get("page_title") or ""
+        title_hit = any(any(f in title for f in [t, *sorted((expand or {}).get(t, ()))])
+                        for t in tokens)
         host = r.get("host") or ""
         if hq_boost and host == HQ_HOST:
             s *= HQ_BOOST
@@ -362,20 +373,42 @@ def score_rows(rows: list[dict[str, Any]], tokens: Sequence[str],
             page_title=r.get("page_title") or "", path=path, text=text,
             quote_key=r.get("quote_key"), page_modified=r.get("page_modified"),
             observed_at=r.get("observed_at") or "", score=round(s, 3),
+            page_score=round(s * (TITLE_BOOST if title_hit else 1.0), 3),
             matched=matched))
     hits.sort(key=lambda h: (-h.score, len(h.text)))
     return hits
 
 
+def rank_pages(hits: list[Hit]) -> list[tuple[Hit, list[Hit], float]]:
+    """★ 두 단계로 나눈다.
+
+      1. 어느 **문서**인가 — 제목까지 근거로 쓴다 (page_score)
+      2. 그 안 **어디**인가 — 본문·경로만 근거로 쓴다 (score)
+
+    두 질문은 다르고, 다른 근거를 쓴다. 섞으면 한 페이지의 모든 섹션이
+    제목 점수를 똑같이 받아 그 안에서 엉뚱한 문단이 1등이 된다.
+
+    돌려주는 것: (대표 섹션, 그 페이지의 섹션들, 1등/2등 점수비)
+    """
+    by_page: dict[str, list[Hit]] = {}
+    for h in hits:
+        by_page.setdefault(h.page_url, []).append(h)
+
+    out = []
+    for url, secs in by_page.items():
+        secs.sort(key=lambda h: (-h.score, len(h.text)))
+        margin = (secs[0].score / secs[1].score
+                  if len(secs) > 1 and secs[1].score > 0 else float("inf"))
+        rep = secs[0]
+        rep.page_score = max(h.page_score for h in secs)
+        out.append((rep, secs, margin))
+    out.sort(key=lambda x: (-x[0].page_score, len(x[0].text)))
+    return out
+
+
 def _dedupe_by_page(hits: list[Hit]) -> list[Hit]:
     """페이지마다 가장 잘 맞는 것 하나만. 같은 페이지를 여러 줄 보여줄 이유가 없다."""
-    seen, out = set(), []
-    for h in hits:
-        if h.page_url in seen:
-            continue
-        seen.add(h.page_url)
-        out.append(h)
-    return out
+    return [rep for rep, _, _ in rank_pages(hits)]
 
 
 def search(conn, utterance: str, *, repo) -> SearchResult:
@@ -458,9 +491,11 @@ def _attempt(conn, utterance: str, tokens: list[str], *, repo,
                 if weights.get(t, 0.0) >= top_w * CORE_MARGIN]
     lookup = list(tokens) + sorted({a for v in expand.values() for a in v})
     rows = repo.search_sections(conn, lookup, host=site_host)
-    hits = score_rows(rows, tokens, weights, hq_boost=site_host is None,
-                      expand=expand)
-    hits = _dedupe_by_page(hits)
+    scored = score_rows(rows, tokens, weights, hq_boost=site_host is None,
+                        expand=expand)
+    ranked = rank_pages(scored)
+    hits = [rep for rep, _, _ in ranked]
+    margin_of = {rep.page_url: m for rep, _, m in ranked}
 
     result = SearchResult(Outcome.NOT_FOUND, query_tokens=tokens,
                           searched_sections=total,
@@ -505,11 +540,22 @@ def _attempt(conn, utterance: str, tokens: list[str], *, repo,
     # 놓치면 학생이 다른 데를 찾고, 틀리면 잘못된 곳으로 간다 — 교환이 성립하지 않는다.
     off = [t for t in required
            if not any(f in topic_zone for f in [t, *sorted(expand.get(t, ()))])]
-    if off:
+    # ★ 한 단계 올라가는 것과 모른다고 하는 것을 가른다.
+    #   핵심 낱말이 제목·첫머리에 **있으면** 페이지는 맞다. 섹션만 못 고른 것이다.
+    #     '자퇴 절차' — '자퇴' 는 제목에 있고 '절차' 만 없다. 문서는 '절차' 라는
+    #     말을 안 쓰고 절차를 적는다. 페이지로 답하면 학생이 찾을 수 있다.
+    #   핵심 낱말이 **없으면** 페이지도 아니다. 그때는 모른다고 해야 한다.
+    #     '기숙사 통금' — '통금' 이 어디에도 없다. 생활관 게시판을 보여주면
+    #     학생은 답을 받은 줄 알고 없는 것을 찾게 된다.
+    core_off = core in off
+    page_only = bool(off) and not core_off
+    if core_off:
         result.outcome = Outcome.AMBIGUOUS
-        result.defer_reason = (f"'{' '.join(off)}' 가 제목·첫머리에 없음 "
-                               f"(본문에서 스침)")
+        result.defer_reason = f"'{core}' 가 제목·첫머리에 없음 (본문에서 스침)"
         return result
+    if page_only:
+        result.defer_reason = (f"'{' '.join(off)}' 가 제목·첫머리에 없어 "
+                               f"섹션을 못 고름 → 페이지로 답함")
 
     # 제목에 질문의 말이 없어도 답이 아닌 것은 아니다.
     # '재수강' 을 문서는 '교과의 재이수' 라고 쓴다. 낱말이 다르다고 틀린 답은 아니다.
@@ -534,6 +580,15 @@ def _attempt(conn, utterance: str, tokens: list[str], *, repo,
             f"{rivals[0].score:.0f} vs {top.score:.0f})")
 
     result.outcome = Outcome.AMBIGUOUS if cross_site else Outcome.FOUND
+
+    # ★ 섹션을 못 고르겠으면 고르지 않는다 — 한 단계 올라간다.
+    #   틀린 문단을 확신 있게 인용하는 것보다 맞는 페이지를 통째로 보여주는 게 낫다.
+    #   학생이 스스로 찾을 수 있으니까.
+    if result.outcome is Outcome.FOUND:
+        m = margin_of.get(top.page_url, float("inf"))
+        result.section_margin = round(m, 2) if m != float("inf") else 0.0
+        if page_only or m < SECTION_MARGIN:
+            result.page_level = True
     return result
 
 
