@@ -487,6 +487,16 @@ def render_section(result, *, utterance: str = "") -> dict:
 
     subject = result.subject or (utterance or "").strip()[:20]
 
+    if result.outcome is Outcome.PERSONAL:
+        # ★ 개인 기록은 우리가 볼 수 없다. 비슷한 규정을 인용하면
+        #   학생은 자기 성적을 물었는데 학칙을 받게 된다.
+        return kakao.response(
+            [kakao.simple_text(
+                "본인 성적·수강신청·장학금 내역 같은 개인 기록은 확인해 드릴 수 없어요.\n"
+                "학교 포털(OASIS)에 로그인해서 보셔야 해요.\n\n"
+                "제도나 규정이 궁금하시면 그건 알려드릴 수 있어요.")],
+            [kakao.quick_reply("처음으로")])
+
     if result.outcome is Outcome.NO_QUERY:
         return kakao.response(
             [kakao.simple_text(

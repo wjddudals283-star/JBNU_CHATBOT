@@ -395,3 +395,54 @@ def test_사라진_섹션은_검색_색인에서도_빠진다(db):
         "SELECT COUNT(*) FROM page_section_fts WHERE text LIKE '%1종 장학금%'"
     ).fetchone()[0]
     assert left == 0
+
+
+# ── 확신의 문턱 ─────────────────────────────────────────────────────────
+#
+# 놓치면 학생이 다른 데를 찾는다. 틀리면 잘못된 곳으로 간다.
+# 둘을 같은 무게로 재지 않는다.
+
+def test_개인_기록은_검색으로_답하지_않는다(db):
+    """'내 성적' 에 학칙을 인용하면 학생은 자기 성적을 물었는데 규정을 받는다."""
+    _seed(db)
+    for q in ["내 성적 알려줘", "제 장학금 얼마 받아요", "본인 수강신청 내역"]:
+        r = ss.search(db, q, repo=repo)
+        assert r.outcome is ss.Outcome.PERSONAL, q
+    # 제도를 묻는 것은 답한다
+    assert ss.search(db, "1종 장학금", repo=repo).outcome is not ss.Outcome.PERSONAL
+
+
+def test_핵심_낱말만_필수다(db):
+    """'재수강 규정' 의 뜻은 '재수강' 에 있지 '규정' 에 있지 않다.
+
+    흔한 낱말까지 다 요구하면 동의어를 쓰는 정답이 전부 죽는다.
+    """
+    _seed(db, url="/r", title="교과 재이수",
+          body='<div class="com-box-01"><h2>1종 장학금 안내</h2><ul>'
+               '<li>1종 장학금은 등록금 전액을 지원한다</li></ul></div>')
+    r = ss.search(db, "1종 장학금 방법", repo=repo)
+    # '방법' 은 문서에 없지만 핵심('1종')이 맞으므로 답한다
+    assert r.outcome is ss.Outcome.FOUND
+
+
+def test_본문에서_스친_낱말로는_단정하지_않는다(db):
+    """'기숙사' 가 학술교류 표 안쪽 셀에 있다고 그 표가 기숙사 안내는 아니다."""
+    # 첫머리는 협정대학 이야기고, 기숙사는 한참 뒤에 한 번 스친다
+    body = ('<div class="com-box-01"><h2>국내대학교간 학술교류 협정대학</h2><ul>'
+            '<li>협정대학: 강원대, 경북대, 경상국립대, 고려대, 공주대, 군산대, '
+            '동국대, 목포대, 부산대, 서울대, 서울시립대, 순천대, 전남대, 제주대, '
+            '충남대, 충북대, 한국교원대와 학점교류 협정을 맺고 있으며, 교류 기간과 '
+            '신청 절차 및 학점 인정 범위는 매 학기 학사과 공지를 따른다</li>'
+            '<li>파견 학생의 기숙사는 본인이 신청</li></ul></div>')
+    _seed(db, url="/x", title="학술교류", body=body)
+    r = ss.search(db, "기숙사 신청", repo=repo)
+    assert r.outcome is not ss.Outcome.FOUND
+    assert "제목·첫머리에 없음" in r.defer_reason
+
+
+def test_메뉴_라벨은_답이_아니다():
+    """'증명서발급' 한 낱말이 목차에서 1등이 됐던 적이 있다."""
+    assert ss.is_label("증명서발급")
+    assert ss.is_label("휴학")
+    assert not ss.is_label("1종 장학금 : 등록금 전액")
+    assert not ss.is_label("A+ | 4.5 | 95 ~ 100")

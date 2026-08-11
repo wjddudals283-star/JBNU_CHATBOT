@@ -59,9 +59,28 @@ MIN_SCORE = 1.2
 #   같은 사이트 안의 후보들은 어차피 같은 문서군이고 링크로 확인할 수 있다.
 #   다른 학과의 규정을 내밀면 학생이 그 사실을 알 방법이 없다.
 #   그래서 사이트가 갈릴 때만 답을 보류한다.
-AMBIGUOUS_RATIO = 0.85
+AMBIGUOUS_RATIO = 0.70
 MAX_CANDIDATES = 5
 PATH_BOOST = 1.6          # 경로(제목)에서 맞으면 본문보다 무겁게 본다
+PATH_ALL_BOOST = 2.2      # 질문의 낱말이 경로에 **전부** 있으면 그게 그 문서다
+# 낱말이 멀리 떨어져 있으면 같은 이야기가 아니다.
+# '휴학' 과 '신청' 이 한 문단 양 끝에 있다고 휴학 신청 안내는 아니다.
+PROXIMITY_WINDOW = 60
+PROXIMITY_PENALTY = 0.55
+# 표의 한 칸에 낱말이 스쳐 지나갈 뿐인 경우.
+# '기숙사는 본인이 신청' 이 학술교류 협정대학 표 안에 있다고
+# 그 표가 기숙사 안내인 것은 아니다. 표는 제목이 주제를 정한다.
+TABLE_OFFTOPIC_PENALTY = 0.35
+# 학과 사이트가 이만큼 동시에 걸리면 그 주제는 학과마다 다른 것이다
+DEPT_SPECIFIC_SITES = 4
+# 문서의 주제가 드러나는 자리 — 제목과 첫머리
+TOPIC_ZONE_CHARS = 140
+# 이 비율 이상의 섹션에 나오는 낱말은 '군더더기' 로 본다.
+# '규정' '방법' '절차' 는 질문을 이루지만 주제를 좁히지 않는다.
+# 목록을 코드에 박지 않고 **실제 출현 수**로 가린다 — 사이트가 바뀌면 값도 바뀐다.
+WEAK_TOKEN_DF = 0.03
+# 사이트 이름이 질문의 말을 담고 있으면 그 사이트가 주제의 주인이다
+SITE_TOPIC_BOOST = 1.4
 # 학과를 안 밝힌 질문에는 본부 문서가 답이다. 학과 페이지 205곳이 표를 갈라
 # 정작 규정 원문이 밀려나는 것을 막는다.
 HQ_HOST = "www.jbnu.ac.kr"
@@ -97,8 +116,23 @@ def match_site(utterance: str) -> tuple[str | None, str]:
     return best_host, best_name
 
 
+# 개인 기록 조회 — 크롤로는 영원히 못 넘는 벽이다.
+# 비슷한 낱말이 든 규정을 인용하면 학생은 자기 성적을 물었는데 학칙을 받는다.
+PERSONAL_MARKERS = ("내 ", "제 ", "나의", "본인", "저의", "내가")
+PERSONAL_TOPICS = ("성적", "학점", "수강신청", "장학금", "등록금", "출결",
+                   "졸업", "이수", "고지서", "시간표")
+
+
+def is_personal_lookup(utterance: str) -> bool:
+    u = (utterance or "").strip()
+    return (any(u.startswith(m) or f" {m.strip()} " in f" {u} "
+                for m in PERSONAL_MARKERS)
+            and any(t in u for t in PERSONAL_TOPICS))
+
+
 class Outcome(str, Enum):
     FOUND = "found"
+    PERSONAL = "personal"
     AMBIGUOUS = "ambiguous"
     NOT_FOUND = "not_found"
     NO_DATA = "no_data"
@@ -132,6 +166,7 @@ class SearchResult:
     site_host: str | None = None      # 질문이 특정 학과를 가리켰나
     site_name: str = ""
     missing_tokens: list[str] = field(default_factory=list)  # 못 찾은 낱말
+    defer_reason: str = ""    # 왜 보류했나 — 진단용. 조용히 접으면 못 고친다
 
     @property
     def top(self) -> Hit | None:
@@ -185,12 +220,26 @@ def _weights(tokens: Sequence[str], total: int, df: dict[str, int]) -> dict[str,
     return w
 
 
+# 메뉴·목차 라벨 — 답이 아니라 이름표다.
+# '증명서발급' 한 낱말이 '증명서 발급' 질문에 가장 잘 맞아 목차가 1등이 됐다.
+# 띄어쓰기도 숫자도 없는 짧은 말은 문장이 아니다.
+LABEL_MAX_CHARS = 12
+
+
+def is_label(text: str) -> bool:
+    t = (text or "").strip()
+    return (0 < len(t) <= LABEL_MAX_CHARS
+            and " " not in t and not any(c.isdigit() for c in t))
+
+
 def score_rows(rows: list[dict[str, Any]], tokens: Sequence[str],
                weights: dict[str, float], *, hq_boost: bool = True) -> list[Hit]:
     hits: list[Hit] = []
     for r in rows:
         text = r.get("text") or ""
         path = r.get("path") or ""
+        if is_label(text):
+            continue
         matched, s = [], 0.0
         for t in tokens:
             in_text = t in text
@@ -203,9 +252,26 @@ def score_rows(rows: list[dict[str, Any]], tokens: Sequence[str],
             continue
         # 질문의 여러 낱말이 한 문단에 같이 나오면 그만큼 더 맞는 답이다
         s *= 1.0 + 0.35 * (len(matched) - 1)
+
+        # 경로에 전부 들어 있으면 그 문서의 제목이 곧 질문이다
+        if len(matched) > 1 and all(t in path for t in matched):
+            s *= PATH_ALL_BOOST
+        elif len(matched) > 1:
+            # 본문에서만 맞았다면 낱말끼리 얼마나 붙어 있는지 본다
+            pos = [text.find(t) for t in matched if t in text]
+            if len(pos) > 1 and (max(pos) - min(pos)) > PROXIMITY_WINDOW:
+                s *= PROXIMITY_PENALTY
+        # 표 행인데 표 제목에 질문의 말이 하나도 없으면 스쳐 지나간 것이다
+        if r.get("kind") == "table_row" and not any(t in path for t in matched):
+            s *= TABLE_OFFTOPIC_PENALTY
+
         host = r.get("host") or ""
         if hq_boost and host == HQ_HOST:
             s *= HQ_BOOST
+        # '취업 상담' 이면 '취업진로지원과' 가 '항공우주공학과' 보다 맞다.
+        sname = site_names().get(host, "")
+        if sname and any(t in sname for t in matched):
+            s *= SITE_TOPIC_BOOST
         hits.append(Hit(
             section_key=r["section_key"], page_url=r["page_url"], host=host,
             site_name=site_names().get(host, ""),
@@ -229,6 +295,9 @@ def _dedupe_by_page(hits: list[Hit]) -> list[Hit]:
 
 
 def search(conn, utterance: str, *, repo) -> SearchResult:
+    if is_personal_lookup(utterance):
+        # 우리는 로그인 뒤를 못 본다. 비슷한 규정을 내미는 것은 답이 아니다.
+        return SearchResult(Outcome.PERSONAL)
     tokens = tokenize(utterance)
     if not tokens:
         return SearchResult(Outcome.NO_QUERY)
@@ -240,6 +309,11 @@ def search(conn, utterance: str, *, repo) -> SearchResult:
 
     site_host, site_label = match_site(utterance)
     df = {t: repo.token_doc_freq(conn, t) for t in tokens}
+    # ★ 질문의 뜻을 지고 있는 낱말은 **가장 드문 것** 하나다.
+    #   '재수강 규정' 의 뜻은 '재수강' 에 있지 '규정' 에 있지 않다.
+    #   문서가 '규정' 이라는 말을 안 썼다고 틀린 답이 아니다.
+    #   흔한 낱말까지 다 요구하면 동의어를 쓰는 정답이 전부 죽는다.
+    core = min(tokens, key=lambda t: (df.get(t, 0), -len(t)))
     rows = repo.search_sections(conn, tokens, host=site_host)
     hits = score_rows(rows, tokens, _weights(tokens, total, df),
                       hq_boost=site_host is None)
@@ -249,6 +323,8 @@ def search(conn, utterance: str, *, repo) -> SearchResult:
                           searched_sections=total,
                           site_host=site_host, site_name=site_label)
     if not hits or hits[0].score < MIN_SCORE:
+        result.defer_reason = ("후보 없음" if not hits
+                               else f"점수 미달 {hits[0].score:.1f} < {MIN_SCORE}")
         return result
 
     # 인용 단위를 붙인다 — 잎으로 찾고 부모를 인용한다
@@ -263,16 +339,50 @@ def search(conn, utterance: str, *, repo) -> SearchResult:
     rivals = [h for h in hits[1:MAX_CANDIDATES]
               if h.score >= top.score * AMBIGUOUS_RATIO]
     result.hits = hits[:MAX_CANDIDATES]
-    result.missing_tokens = [t for t in tokens if t not in top.matched]
+    result.missing_tokens = ([core] if core not in top.matched else [])
 
     # ★ 긍정 단정에는 높은 근거를 요구한다.
     #   질문의 낱말 하나가 어디에도 안 맞았는데 확신하면 엉뚱한 문서를 답으로 준다.
     #   '기숙사 통금' 에서 '통금' 을 놓치고 학술교류 협정문을 내놓은 적이 있다.
     if result.missing_tokens:
         result.outcome = Outcome.AMBIGUOUS
+        result.defer_reason = f"못 찾은 낱말 {result.missing_tokens}"
         return result
 
-    # 경쟁 후보가 **다른 사이트**에 있을 때만 보류한다.
-    cross_site = any(h.host != top.host for h in rivals)
+    # ★ 핵심 낱말이 **어디에** 있는지가 중요하다.
+    #   제목이나 첫머리에 있으면 그 문서의 주제고, 본문 깊숙이 한 번 스치면
+    #   남의 이야기다. '기숙사' 가 학술교류 협정대학 표 안쪽 셀에 있다고
+    #   그 표가 기숙사 안내는 아니다. '분실물' 도 건지광장 규정 속에 있었다.
+    #   ★ 잎 자신의 경로(top.path)는 쓰지 않는다 — 마지막 칸이 잎 텍스트라
+    #     "내 제목에 내 말이 있다" 는 순환 논리가 된다. 부모 경로만 본다.
+    topic_zone = (f"{top.quote_path} {top.page_title} "
+                  f"{top.quote_text[:TOPIC_ZONE_CHARS]}")
+    if core not in topic_zone:
+        result.outcome = Outcome.AMBIGUOUS
+        result.defer_reason = f"'{core}' 가 제목·첫머리에 없음 (본문에서 스침)"
+        return result
+
+    # 제목에 질문의 말이 없어도 답이 아닌 것은 아니다.
+    # '재수강' 을 문서는 '교과의 재이수' 라고 쓴다. 낱말이 다르다고 틀린 답은 아니다.
+    # 목차가 이기는 문제는 색인 단계에서 라벨을 빼서 푼다 (parser 의 is_index).
+
+    # 경쟁 후보가 **다른 사이트**에 있을 때 보류한다.
+    # 다만 1등이 본부 문서면 보류하지 않는다 — 본부 규정은 전교 공통이라
+    # 학과 페이지가 여럿 걸려도 답은 본부 것이 맞다.
+    cross_site = (top.host != HQ_HOST
+                  and any(h.host != top.host for h in rivals))
+
+    # ★ 여러 학과가 저마다 답을 갖고 있으면, 그 주제는 학과마다 다른 것이다.
+    #   '졸업요건' 이 그렇다. 주제 목록을 코드에 박지 않고 관측으로 가린다 —
+    #   학과 사이트 여럿이 동시에 걸린다는 사실 자체가 근거다.
+    dept_rivals = {h.host for h in rivals if h.host != HQ_HOST}
+    if len(dept_rivals) >= DEPT_SPECIFIC_SITES:
+        cross_site = True
+        result.defer_reason = f"학과 {len(dept_rivals)}곳이 저마다 답을 가짐"
+    elif cross_site:
+        result.defer_reason = (
+            f"다른 사이트 후보가 근접 ({rivals[0].site_name} "
+            f"{rivals[0].score:.0f} vs {top.score:.0f})")
+
     result.outcome = Outcome.AMBIGUOUS if cross_site else Outcome.FOUND
     return result
