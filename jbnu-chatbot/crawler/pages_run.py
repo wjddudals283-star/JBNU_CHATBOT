@@ -132,9 +132,30 @@ CHUNK_SIZE = 400
 #   스케줄러에서 고쳤던 것과 같은 문제가 다른 자리에서 났다.
 PROGRESS_EVERY = 50
 SLOW_FETCH_SEC = 5.0
-# 재시작했을 때 이 시간 안에 이미 다녀온 페이지는 건너뛴다.
-# 하루 1회 도는 작업이라 20시간이면 '이번 회차에 이미 했다' 는 뜻이 된다.
-RESUME_WITHIN_HOURS = 20.0
+# ★ 이어하기 기준은 시간 창이 아니라 **회차**다.
+#   '20시간 안에 다녀왔으면 건너뛴다' 는 '이번 회차에 이미 했다' 를 근사한 것이고,
+#   근사는 수집이 길어지면 어긋난다 — 03:10 에 시작해 09:10 에 끝나면
+#   마지막 2시간분이 다음날 건너뛰어져 이틀에 한 번만 갱신된다.
+#   그리고 **조용히** 그렇게 된다. 아무도 모른다.
+#
+#   정확한 뜻: 아직 안 끝난 회차가 있으면, 그 회차가 시작한 뒤 처리한 것만 건너뛴다.
+#   직전 회차가 완주했으면 건너뛸 것이 없다 = 전량 수집.
+ABANDON_AFTER_HOURS = 24.0   # 이보다 오래된 미완주 회차는 포기된 것으로 본다
+
+
+def _unfinished_run_started(conn, now: dt.datetime) -> str | None:
+    """아직 안 끝난 회차의 시작 시각. 없으면 None (= 건너뛸 것 없음).
+
+    ★ 시간 창이 아니라 회차로 잇는다.
+      완주하면 다음 회차는 전량을 다시 본다 — 신선도가 시간에 안 밀린다.
+    """
+    since = (now - dt.timedelta(hours=ABANDON_AFTER_HOURS)).isoformat()
+    r = conn.execute(
+        """SELECT started_at FROM crawl_run
+            WHERE source_key = 'jbnu_pages' AND finished_at IS NULL
+              AND started_at >= ?
+            ORDER BY started_at ASC LIMIT 1""", (since,)).fetchone()
+    return r[0] if r else None
 
 
 def _process_chunk(rows, *, conn, stamp, delay, site_names, snapshot_root=None,
@@ -292,19 +313,21 @@ def run(db_path: str, *, limit: int | None = None, delay: float = DEFAULT_DELAY,
         # ★ 재시작이면 이미 다녀온 곳은 건너뛴다.
         #   배포가 잦으면 매번 처음부터라 영영 안 끝난다 — 실제로 그랬다.
         if resume:
-            cutoff = (now - dt.timedelta(hours=RESUME_WITHIN_HOURS)).isoformat()
-            done = {r[0] for r in conn.execute(
-                "SELECT page_url FROM page_registry WHERE last_attempt_at >= ?",
-                (cutoff,))}
-            before = len(rows)
-            rows = [r for r in rows if r["url"] not in done]
-            if before != len(rows):
-                log.info("[pages] 이어서: %s페이지 건너뜀, 남은 %s",
-                         before - len(rows), len(rows))
+            cutoff = _unfinished_run_started(conn, now)
+            if cutoff:
+                done = {r[0] for r in conn.execute(
+                    "SELECT page_url FROM page_registry WHERE last_attempt_at >= ?",
+                    (cutoff,))}
+                before = len(rows)
+                rows = [r for r in rows if r["url"] not in done]
+                log.info("[pages] 이어서: %s 에 시작한 회차를 잇는다. "
+                         "%s페이지 건너뜀, 남은 %s",
+                         cutoff[:16], before - len(rows), len(rows))
                 if verbose:
-                    print(f"  이어서: {before - len(rows)}페이지는 최근 "
-                          f"{RESUME_WITHIN_HOURS:.0f}h 안에 다녀왔다 → 건너뜀. "
-                          f"남은 {len(rows)}")
+                    print(f"  이어서: {cutoff[:16]} 회차를 잇는다 — "
+                          f"{before - len(rows)}페이지 건너뜀, 남은 {len(rows)}")
+            else:
+                log.info("[pages] 새 회차 — 직전 회차가 완주했으므로 전량 수집")
 
         repo.start_crawl(conn, run_id=run_id, source_key="jbnu_pages",
                          started_at=stamp)
