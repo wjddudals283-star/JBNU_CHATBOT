@@ -78,7 +78,21 @@ DEPT = Profile(
                     ".artclTable", ".artclSerch", ".artclList", ".board-list",
                     ".paging", ".sns-list", "#sideA", "#footerSec"),
 )
+# 나머지 사이트 — 생활관·도서관·대학원처럼 구조가 제각각인 곳.
+# 셀렉터를 사이트마다 박으면 15곳을 15번 고쳐야 한다.
+# 대신 **글자가 가장 많고 링크가 적은 덩어리**를 본문으로 본다.
+# 이건 추측이 아니라 관측이다 — 본문은 글이 많고 네비게이션은 링크가 많다.
+GENERIC = Profile(
+    key="generic",
+    content_selectors=(),          # 밀도로 고른다
+    block_classes=(),              # 블록 구분이 없으므로 본문 전체가 한 블록
+    drop_selectors=("script", "style", "nav", "header", "footer",
+                    ".gnb", ".lnb", ".snb", ".menu", ".nav", ".footer",
+                    ".header", "#header", "#footer", "#gnb", "#lnb",
+                    ".paging", ".sns", ".skip"),
+)
 PROFILES = (WWW, DEPT)
+MIN_GENERIC_CHARS = 120            # 이보다 적으면 본문이라 볼 수 없다
 
 CONTENT_SELECTORS = WWW.content_selectors      # 하위 호환
 BLOCK_CLASSES = WWW.block_classes
@@ -326,6 +340,32 @@ def _emit_deflist(dl, result: ParseResult, page_url: str, path: list[str],
 
 # ---------------------------------------------------------------- 본체
 
+def _densest_node(tree):
+    """글자가 많고 링크가 적은 덩어리를 본문으로 고른다.
+
+    본문은 글이 많고 네비게이션은 링크가 많다. 그 차이를 점수로 쓴다.
+    전체의 90% 를 넘는 노드는 페이지 껍데기라 제외한다.
+    """
+    body = tree.css_first("body")
+    if body is None:
+        return None
+    total = len(re.sub(r"\s+", "", body.text() or ""))
+    if total < MIN_GENERIC_CHARS:
+        return None
+    best, best_score = None, 0.0
+    for n in body.traverse(include_text=False):
+        if n.tag not in ("div", "section", "article", "main", "td"):
+            continue
+        txt = len(re.sub(r"\s+", "", n.text() or ""))
+        if txt < MIN_GENERIC_CHARS or txt > total * 0.9:
+            continue
+        link = sum(len(re.sub(r"\s+", "", a.text() or "")) for a in n.css("a"))
+        score = txt - 1.5 * link
+        if score > best_score:
+            best, best_score = n, score
+    return best
+
+
 def detect_profile(tree) -> Profile | None:
     """어느 CMS 인지는 **컨테이너가 있느냐**로 정한다. 주소로 짐작하지 않는다.
 
@@ -345,17 +385,22 @@ def content_root(html: str, profile: Profile | None = None):
     보는 대상이 다르면 탐지한 해시가 파싱 때 안 맞는다.
     """
     tree = HTMLParser(html)
-    prof = profile or detect_profile(tree)
-    if prof is None:
-        raise ParseError(
-            "본문 컨테이너를 찾지 못했다 "
-            f"(알고 있는 CMS: {[p.key for p in PROFILES]})")
+    prof = profile or detect_profile(tree) or GENERIC
 
     body = None
     for sel in prof.content_selectors:
         body = tree.css_first(sel)
         if body is not None:
             break
+    if body is None and prof is GENERIC:
+        for sel in GENERIC.drop_selectors:
+            for n in tree.css(sel):
+                n.decompose()
+        body = _densest_node(tree)
+    if body is None:
+        raise ParseError(
+            "본문 컨테이너를 찾지 못했다 "
+            f"(profile={prof.key}, 글자가 너무 적거나 전부 링크다)")
 
     for sel in prof.drop_selectors:
         for n in body.css(sel):
@@ -380,14 +425,16 @@ def page_fragments(html: str, profile: Profile | None = None) -> dict[str, str]:
     return boilerplate.fragments(body)
 
 
-def fragments_with_profile(html: str) -> tuple[str, dict[str, str]]:
+def fragments_with_profile(html: str, host: str = "") -> tuple[str, dict[str, str]]:
     """조각과 함께 **어느 CMS 인지**를 돌려준다.
 
     보일러플레이트는 CMS 마다 따로 세야 한다. 섞어서 세면 본부 템플릿이
     학과 페이지 수에 희석돼 임계를 못 넘고, 반대도 마찬가지다.
     """
     _, body, prof = content_root(html, None)
-    return prof.key, boilerplate.fragments(body)
+    # 일반 프로필은 사이트마다 템플릿이 다르다. 섞어서 세면 아무것도 안 걸린다.
+    key = f"{prof.key}:{host}" if prof is GENERIC and host else prof.key
+    return key, boilerplate.fragments(body)
 
 
 def parse(html: str, *, page_url: str = "", boilerplate_report=None,

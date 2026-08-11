@@ -35,6 +35,7 @@ log = logging.getLogger(__name__)
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 PAGES_YAML = ROOT / "config" / "pages.yaml"
 DEPT_YAML = ROOT / "config" / "pages_dept.yaml"
+SITES_YAML = ROOT / "config" / "pages_sites.yaml"
 UA = "Mozilla/5.0 (compatible; JBNU-StudentCouncil-Bot/1.0)"
 DEFAULT_DELAY = 0.7
 # 본부는 /web/ 한국어 전체. 영문 사이트(/en/)·게시판 상세는 뺀다.
@@ -75,6 +76,17 @@ def targets(limit: int | None = None, *, include_dept: bool = True) -> list[dict
             out.append({"url": u, "path": up.urlsplit(u).path,
                         "host": p.get("host") or up.urlsplit(u).hostname,
                         "kind": "dept_subview"})
+
+    if include_dept and SITES_YAML.exists():
+        sdoc = yaml.safe_load(SITES_YAML.read_text(encoding="utf-8"))
+        for p in sdoc.get("pages", []):
+            u = p["url"]
+            if u in seen:
+                continue
+            seen.add(u)
+            out.append({"url": u, "path": up.urlsplit(u).path or "/",
+                        "host": p.get("host") or up.urlsplit(u).hostname,
+                        "kind": "site_page"})
 
     # 호스트를 번갈아 가며 돈다 — 한 사이트를 연달아 때리지 않기 위해서다.
     # 우리는 손님이고, 손님은 한 집 문만 두드리지 않는다.
@@ -151,7 +163,7 @@ def run(db_path: str, *, limit: int | None = None, delay: float = DEFAULT_DELAY,
     page_profile: dict[str, str] = {}
     for u, h in html.items():
         try:
-            key, frags = SV.fragments_with_profile(h)
+            key, frags = SV.fragments_with_profile(h, up.urlsplit(u).hostname or "")
             page_profile[u] = key
             by_profile.setdefault(key, []).append(frags)
         except Exception as e:  # noqa: BLE001

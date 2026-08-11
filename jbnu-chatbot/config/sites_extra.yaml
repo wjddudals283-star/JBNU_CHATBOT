@@ -1,0 +1,53 @@
+# 개별 구조 사이트 — 학과 CMS 도 본부 CMS 도 아닌 곳.
+#
+# 우선순위는 **학생이 실제로 묻는 순서**로 정했다.
+# 생활관이 첫째인 이유: '기숙사' 질문에 지금 자료가 0건이다.
+#
+# start 는 조사에서 실제로 200 이 나온 주소만 적는다.
+# 지어낸 주소는 넣지 않는다 — 오늘 그걸로 네 번 틀렸다.
+
+sites:
+  - host: likehome.jbnu.ac.kr
+    name: 생활관
+    start: https://likehome.jbnu.ac.kr/home/main/inner.php?sMenu=A1000
+    why: 기숙사 신청·요금·수칙 — 학생 질문 상위, 현재 자료 0건
+
+  - host: dl.jbnu.ac.kr
+    name: 도서관
+    start: https://dl.jbnu.ac.kr/
+    why: 이용시간·대출·열람실
+
+  - host: graduate.jbnu.ac.kr
+    name: 대학원
+    start: https://graduate.jbnu.ac.kr/
+    why: 대학원 학사·입학
+
+  - host: eng.jbnu.ac.kr
+    name: 공과대학
+    start: https://eng.jbnu.ac.kr/
+    why: 단과대 공통 안내
+
+  - host: fieldwork.jbnu.ac.kr
+    name: 현장실습지원센터
+    start: https://fieldwork.jbnu.ac.kr/
+    why: 현장실습 신청·학점
+
+  - host: startup.jbnu.ac.kr
+    name: 창업교육센터
+    start: https://startup.jbnu.ac.kr/
+    why: 창업 강좌·지원
+
+  - host: happycenter.jbnu.ac.kr
+    name: 행복드림센터
+    start: https://happycenter.jbnu.ac.kr/
+    why: 심리상담 — 안전 분기와 이어지는 주제
+
+  - host: museum.jbnu.ac.kr
+    name: 박물관
+    start: https://museum.jbnu.ac.kr/
+    why: 관람 안내
+
+  - host: ssac.jbnu.ac.kr
+    name: 삼성문화회관
+    start: https://ssac.jbnu.ac.kr/
+    why: 공연·대관
