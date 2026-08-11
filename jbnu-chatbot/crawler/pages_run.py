@@ -125,12 +125,20 @@ def _empty_blocks(sections) -> int:
 
 
 CHUNK_SIZE = 400
+# ★ 진행은 **묶음 경계가 아니라 일정 간격**으로 찍는다.
+#   묶음 끝에서만 찍으면 묶음이 느려질 때 그만큼 침묵한다 —
+#   실제로 4000/6985 이후 59분간 진행 로그가 0건이었고,
+#   살아 있는지 멈췄는지 구별할 수 없었다.
+#   스케줄러에서 고쳤던 것과 같은 문제가 다른 자리에서 났다.
+PROGRESS_EVERY = 50
+SLOW_FETCH_SEC = 5.0
 # 재시작했을 때 이 시간 안에 이미 다녀온 페이지는 건너뛴다.
 # 하루 1회 도는 작업이라 20시간이면 '이번 회차에 이미 했다' 는 뜻이 된다.
 RESUME_WITHIN_HOURS = 20.0
 
 
-def _process_chunk(rows, *, conn, stamp, delay, site_names, snapshot_root=None):
+def _process_chunk(rows, *, conn, stamp, delay, site_names, snapshot_root=None,
+                   base: int = 0, grand_total: int = 0):
     """묶음 하나를 **끝까지** 처리한다 — 받고, 조각 세고, 파싱하고, 저장까지.
 
     ★ 전부 받은 뒤에 저장하면 중간에 죽었을 때 아무것도 안 남는다.
@@ -139,9 +147,12 @@ def _process_chunk(rows, *, conn, stamp, delay, site_names, snapshot_root=None):
     """
     html: dict[str, str] = {}
     fetch_fail: dict[str, tuple] = {}
+    slow = 0
+    t_start = time.monotonic()
     with httpx.Client(timeout=30.0, verify=fetch_mod.lax_ssl(),
                       follow_redirects=True, headers={"User-Agent": UA}) as c:
-        for r in rows:
+        for j, r in enumerate(rows, 1):
+            t0 = time.monotonic()
             try:
                 resp = c.get(r["url"])
                 if resp.status_code != 200:
@@ -155,6 +166,14 @@ def _process_chunk(rows, *, conn, stamp, delay, site_names, snapshot_root=None):
                         snapshots.save(r["url"], resp.text, snapshot_root)
             except Exception as e:  # noqa: BLE001
                 fetch_fail[r["url"]] = (None, f"{type(e).__name__}: {e}"[:200])
+            took = time.monotonic() - t0
+            if took >= SLOW_FETCH_SEC:
+                slow += 1
+            if j % PROGRESS_EVERY == 0:
+                el = time.monotonic() - t_start
+                # ★ 초/page 를 같이 찍는다. 느려지면 숫자가 먼저 말해준다.
+                log.info("[pages] 진행 %s/%s · %.2fs/page · 느린요청 %s",
+                         base + j, grand_total or len(rows), el / j, slow)
             time.sleep(delay)
 
     # CMS 마다 따로 센다. 섞으면 한쪽 템플릿이 다른 쪽 페이지 수에 희석된다.
@@ -230,6 +249,9 @@ def _process_chunk(rows, *, conn, stamp, delay, site_names, snapshot_root=None):
         tally[status] += 1
 
     conn.commit()          # ★ 묶음이 끝날 때마다 남긴다
+    if slow:
+        log.info("[pages] 이 묶음에서 %ss 이상 걸린 요청 %s개 — 느려지면 여기가 원인이다",
+                 SLOW_FETCH_SEC, slow)
     return tally, sections, boards, notices
 
 
@@ -293,7 +315,8 @@ def run(db_path: str, *, limit: int | None = None, delay: float = DEFAULT_DELAY,
             chunk = rows[start:start + CHUNK_SIZE]
             t, sec, brd, ntc = _process_chunk(
                 chunk, conn=conn, stamp=stamp, delay=delay,
-                site_names=site_names, snapshot_root=snap_root)
+                site_names=site_names, snapshot_root=snap_root,
+                base=start, grand_total=total)
             for k, v in t.items():
                 tally[k] += v
             total_sections += sec

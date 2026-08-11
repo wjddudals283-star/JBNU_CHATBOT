@@ -494,3 +494,20 @@ def test_안_잘렸으면_잘렸다고_하지_않는다(db):
     repo.search_sections(db, ["1종"], limit=600, stats=stats)
     assert stats["truncated"] is False
     assert "matched" not in stats, "안 잘렸으면 굳이 세지 않는다 (비용)"
+
+
+def test_진행은_묶음_경계가_아니라_일정_간격으로_찍는다():
+    """묶음 끝에서만 찍으면 묶음이 느려질 때 그만큼 침묵한다.
+
+    실제로 4000/6985 이후 59분간 진행 로그가 0건이었고,
+    살아 있는지 멈췄는지 구별할 수 없었다.
+    스케줄러에서 고쳤던 것과 같은 문제가 다른 자리에서 났다.
+    """
+    from crawler import pages_run
+    assert pages_run.PROGRESS_EVERY < pages_run.CHUNK_SIZE, (
+        "간격이 묶음보다 크면 묶음 경계에서만 찍히는 것과 같다")
+    src = pathlib.Path(pages_run.__file__).read_text(encoding="utf-8")
+    # 진행 로그가 fetch 루프 **안**에 있어야 한다
+    loop = src.split("for j, r in enumerate(rows, 1):", 1)[1].split("\n\n", 1)[0]
+    assert "PROGRESS_EVERY" in loop
+    assert "s/page" in loop, "느려지면 숫자가 먼저 말해줘야 한다"
