@@ -373,6 +373,11 @@ def _handle_section(db_path: pathlib.Path, utterance: str, *,
     log.info("[skill] section tokens=%s outcome=%s hits=%s pool=%s confident_only=%s",
              result.query_tokens, result.outcome.value, len(result.hits),
              result.searched_sections, only_confident)
+    # ★ 천장에 닿은 횟수를 세면 상한을 얼마로 할지 추측할 필요가 없다.
+    if result.candidates_truncated:
+        log.warning("[skill] candidates_truncated: %s -> %s tokens=%s",
+                    result.candidates_matched, result.candidates_returned,
+                    result.query_tokens)
     # ★ 폴백에서는 **확실할 때만** 답한다.
     #   애매한 결과까지 받아치면 "안녕하세요" 에 총장 연설문 목록이 나간다.
     #   실제로 그랬다. 인사말은 검색어가 아니다.

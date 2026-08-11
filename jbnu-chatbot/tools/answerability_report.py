@@ -236,6 +236,8 @@ def main(argv: list[str] | None = None) -> int:
                            or getattr(top, "title", ""))[:120]
                           .replace("\n", " ") if top else ""),
                 "ms": round(ms), "defer": getattr(r, "defer_reason", ""),
+                "truncated": getattr(r, "candidates_truncated", False),
+                "matched": getattr(r, "candidates_matched", 0),
             })
             if v != "OK" and expect == A:
                 kind, where = bottleneck(conn, q, must)
@@ -285,6 +287,16 @@ def main(argv: list[str] | None = None) -> int:
         # ★ 틀린 것과 놓친 것을 같은 무게로 세지 않는다.
         #   놓치면 학생이 다른 데를 찾는다. 틀리면 잘못된 곳으로 간다.
         print(f"★ 확신하고 틀린 것 {verdicts['WRONG']}건 — 이게 0에 가까워야 배포할 수 있다")
+
+        # ★ 후보 절단은 두 번 다 오답이 난 뒤에야 알았다. 이제 센다.
+        #   상한을 얼마로 할지 추측하지 말고 천장에 몇 번 닿는지 세면 된다.
+        cut = [r for r in rows if r.get("truncated")]
+        if cut:
+            print(f"\n후보 절단 {len(cut)}/{n}문항 — 상한이 답을 자르고 있다")
+            for r in sorted(cut, key=lambda x: -x["matched"])[:6]:
+                print(f"  {r['matched']:6} → 600   {r['q']:20} [{r['verdict']}]")
+        else:
+            print("\n후보 절단 0문항 — 상한이 아직 답을 자르지 않는다")
 
         # ★ 병목 — 더 긁을 것인가, 검색을 고칠 것인가
         #   DB 에 있는데 못 찾은 것이면 더 긁어도 나아지지 않는다.

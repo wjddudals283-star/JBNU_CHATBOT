@@ -77,6 +77,8 @@ SECTION_MARGIN = 1.5
 #   '복학' 이 든 잎이 22개인데 후보 600개에 **0개**였다.
 #   흔한 낱말은 후보를 넓히기만 하고 변별력이 없다.
 PROBE_DF_MAX = 0.02
+# 후보가 잘렸으면 섹션을 찍는 문턱을 높인다. 확신의 근거가 한 조각 빠졌으므로.
+TRUNCATED_MARGIN_FACTOR = 2.0
 # ★ 길이 정규화를 넣어 봤다가 **되돌렸다**.
 #   진단은 맞았다 — 섹션 165개짜리 '수강신청(학부/대학원)' 이 복학·전과·휴학
 #   질문에서 전부 1등이었고, 전체 중앙값은 8개다. 커서 이긴 것이다.
@@ -263,6 +265,11 @@ class SearchResult:
     via_synonym: str = ""     # 다른 이름으로 찾았으면 그 이름 (답에 밝힌다)
     page_level: bool = False  # 섹션을 못 고르겠어서 페이지 단위로 답한다
     section_margin: float = 0.0
+    # ★ 후보가 상한에 닿았나. 잘린 상태에서 나온 1등은 안 잘린 1등과
+    #   같은 확신을 가질 수 없다 — 더 나은 답이 잘려 나갔을 수 있으므로.
+    candidates_truncated: bool = False
+    candidates_matched: int = 0
+    candidates_returned: int = 0
     defer_reason: str = ""    # 왜 보류했나 — 진단용. 조용히 접으면 못 고친다
 
     @property
@@ -505,7 +512,8 @@ def _attempt(conn, utterance: str, tokens: list[str], *, repo,
     # 드문 낱말만으로 후보를 뽑는다. 하나도 없으면(전부 흔하면) 전부 쓴다.
     probe = [t for t in tokens if df.get(t, 0) <= total * PROBE_DF_MAX] or list(tokens)
     lookup = probe + sorted({a for t in probe for a in expand.get(t, ())})
-    rows = repo.search_sections(conn, lookup, host=site_host)
+    cand: dict = {}
+    rows = repo.search_sections(conn, lookup, host=site_host, stats=cand)
     scored = score_rows(rows, tokens, weights, hq_boost=site_host is None,
                         expand=expand)
     ranked = rank_pages(scored)
@@ -515,6 +523,9 @@ def _attempt(conn, utterance: str, tokens: list[str], *, repo,
     result = SearchResult(Outcome.NOT_FOUND, query_tokens=tokens,
                           searched_sections=total,
                           site_host=site_host, site_name=site_label)
+    result.candidates_truncated = bool(cand.get("truncated"))
+    result.candidates_matched = int(cand.get("matched") or 0)
+    result.candidates_returned = int(cand.get("returned") or 0)
     if not hits or hits[0].score < MIN_SCORE:
         result.defer_reason = ("후보 없음" if not hits
                                else f"점수 미달 {hits[0].score:.1f} < {MIN_SCORE}")
@@ -602,8 +613,15 @@ def _attempt(conn, utterance: str, tokens: list[str], *, repo,
     if result.outcome is Outcome.FOUND:
         m = margin_of.get(top.page_url, float("inf"))
         result.section_margin = round(m, 2) if m != float("inf") else 0.0
-        if page_only or m < SECTION_MARGIN:
+        need = SECTION_MARGIN * (TRUNCATED_MARGIN_FACTOR
+                                 if result.candidates_truncated else 1.0)
+        if page_only or m < need:
             result.page_level = True
+        if result.candidates_truncated and result.page_level:
+            result.defer_reason = (
+                f"후보가 상한에 닿아 잘렸다 "
+                f"({result.candidates_matched} → {result.candidates_returned}). "
+                f"섹션을 찍지 않고 페이지로 답함")
     return result
 
 

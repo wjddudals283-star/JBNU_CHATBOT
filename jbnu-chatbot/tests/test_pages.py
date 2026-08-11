@@ -469,3 +469,28 @@ def test_후보는_드문_낱말로_뽑는다(db):
     r = ss.search(db, "복학 신청", repo=repo)
     assert r.top is not None
     assert "복학" in r.top.page_title, "드문 낱말로 뽑았으면 정답이 후보에 든다"
+
+
+def test_후보가_잘리면_그_사실을_남긴다(db):
+    """후보 절단이 두 번 터졌는데 두 번 다 **오답이 나온 뒤에야** 알았다.
+
+    잘렸다는 사실이 어디에도 안 남았기 때문이다.
+    상한을 얼마로 할지 추측하지 말고 천장에 몇 번 닿는지 센다.
+    """
+    for i in range(6):
+        _seed(db, url=f"/t{i}", title=f"장학 안내 {i}",
+              body=('<div class="com-box-01"><h2>장학</h2><ul>'
+                    f'<li>{i}번 장학금 신청 안내 문서</li></ul></div>'))
+    stats: dict = {}
+    rows = repo.search_sections(db, ["장학금"], limit=2, stats=stats)
+    assert len(rows) == 2
+    assert stats["truncated"] is True
+    assert stats["matched"] > stats["returned"], "몇 개가 잘렸는지 알 수 있어야 한다"
+
+
+def test_안_잘렸으면_잘렸다고_하지_않는다(db):
+    _seed(db)
+    stats: dict = {}
+    repo.search_sections(db, ["1종"], limit=600, stats=stats)
+    assert stats["truncated"] is False
+    assert "matched" not in stats, "안 잘렸으면 굳이 세지 않는다 (비용)"

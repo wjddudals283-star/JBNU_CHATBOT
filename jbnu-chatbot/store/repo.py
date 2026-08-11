@@ -1080,9 +1080,35 @@ def token_doc_freq(conn: sqlite3.Connection, token: str) -> int:
         (like, like)).fetchone()[0]
 
 
+def count_matching(conn: sqlite3.Connection, tokens: Sequence[str], *,
+                   host: str | None = None) -> int:
+    """상한과 무관하게 실제로 몇 개가 걸리는지. 절단을 재려고만 쓴다."""
+    if not tokens:
+        return 0
+    long_toks = [t for t in tokens if len(t) >= FTS_MIN_CHARS]
+    if long_toks and has_fts(conn):
+        match = " OR ".join(_fts_phrase(t) for t in long_toks)
+        return conn.execute(
+            """SELECT COUNT(*) FROM page_section_fts f
+                 JOIN page_section s ON s.section_key = f.section_key
+                 JOIN page_registry r ON r.page_url = s.page_url
+                WHERE page_section_fts MATCH ? AND (? IS NULL OR r.host = ?)""",
+            (match, host, host)).fetchone()[0]
+    clause = " OR ".join(["(s.text LIKE ? OR s.path LIKE ?)"] * len(tokens))
+    args: list[Any] = []
+    for t in tokens:
+        args += [f"%{t}%", f"%{t}%"]
+    args += [host, host]
+    return conn.execute(
+        f"""SELECT COUNT(*) FROM page_section s
+              JOIN page_registry r ON r.page_url = s.page_url
+             WHERE s.is_leaf = 1 AND ({clause}) AND (? IS NULL OR r.host = ?)""",
+        args).fetchone()[0]
+
+
 def search_sections(conn: sqlite3.Connection, tokens: Sequence[str], *,
-                    limit: int = 600, host: str | None = None
-                    ) -> list[dict[str, Any]]:
+                    limit: int = 600, host: str | None = None,
+                    stats: dict | None = None) -> list[dict[str, Any]]:
     """토큰이 하나라도 들어간 색인 섹션을 모은다. 순위는 질의 계층에서 매긴다.
 
     ★ 자를 때는 **관련도 순으로** 자른다.
@@ -1093,6 +1119,23 @@ def search_sections(conn: sqlite3.Connection, tokens: Sequence[str], *,
     """
     if not tokens:
         return []
+
+    def _report(rows_out: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """★ 상한에 닿았으면 그 사실을 남긴다.
+
+        후보 절단이 두 번 터졌는데 두 번 다 **오답이 나온 뒤에야** 알았다.
+        잘렸다는 사실이 어디에도 안 남았기 때문이다.
+        상한을 몇으로 할지 추측하지 말고, 천장에 몇 번 닿는지 세면 된다.
+        """
+        if stats is None:
+            return rows_out
+        stats["returned"] = len(rows_out)
+        stats["limit"] = limit
+        stats["truncated"] = len(rows_out) >= limit
+        if stats["truncated"]:
+            stats["matched"] = count_matching(conn, tokens, host=host)
+        return rows_out
+
     long_toks = [t for t in tokens if len(t) >= FTS_MIN_CHARS]
     short_toks = [t for t in tokens if len(t) < FTS_MIN_CHARS]
 
@@ -1114,7 +1157,7 @@ def search_sections(conn: sqlite3.Connection, tokens: Sequence[str], *,
             """, (match, host, host, limit)).fetchall()
         out = [dict(r) for r in rows]
         if out or not short_toks:
-            return out
+            return _report(out)
         # FTS 가 빈손이면 짧은 토큰만 남은 셈이라 아래로 떨어진다
 
     clause = " OR ".join(["(s.text LIKE ? OR s.path LIKE ?)"] * len(tokens))
@@ -1131,7 +1174,7 @@ def search_sections(conn: sqlite3.Connection, tokens: Sequence[str], *,
          WHERE s.is_leaf = 1 AND ({clause}) AND (? IS NULL OR r.host = ?)
          LIMIT ?
         """, args).fetchall()
-    return [dict(r) for r in rows]
+    return _report([dict(r) for r in rows])
 
 
 def _by_title(conn: sqlite3.Connection, tokens: Sequence[str], *,
@@ -1222,6 +1265,23 @@ def search_notices(conn: sqlite3.Connection, tokens: Sequence[str], *,
     """제목에서 찾는다. 최신 글이 먼저다 — 공지는 오래된 것이 덜 쓸모 있다."""
     if not tokens:
         return []
+
+    def _report(rows_out: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """★ 상한에 닿았으면 그 사실을 남긴다.
+
+        후보 절단이 두 번 터졌는데 두 번 다 **오답이 나온 뒤에야** 알았다.
+        잘렸다는 사실이 어디에도 안 남았기 때문이다.
+        상한을 몇으로 할지 추측하지 말고, 천장에 몇 번 닿는지 세면 된다.
+        """
+        if stats is None:
+            return rows_out
+        stats["returned"] = len(rows_out)
+        stats["limit"] = limit
+        stats["truncated"] = len(rows_out) >= limit
+        if stats["truncated"]:
+            stats["matched"] = count_matching(conn, tokens, host=host)
+        return rows_out
+
     long_toks = [t for t in tokens if len(t) >= FTS_MIN_CHARS]
     if long_toks and has_notice_fts(conn):
         match = " OR ".join(_fts_phrase(t) for t in long_toks)
