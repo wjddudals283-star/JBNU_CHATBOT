@@ -139,6 +139,8 @@ class ParseResult:
     sections: list[Section] = field(default_factory=list)
     quarantined: list[tuple[object, str]] = field(default_factory=list)
     profile: str = ""                            # 어느 CMS 로 읽었나
+    raw_text: str = ""                           # 본문 컨테이너의 원문 텍스트
+                                                 # (섹션이 0이어도 글자가 있었는지 가른다)
     pruned: dict = field(default_factory=dict)   # 보일러플레이트 제거 보고
     # ingest 호환
     meals: list = field(default_factory=list)
@@ -486,6 +488,7 @@ def parse(html: str, *, page_url: str = "", boilerplate_report=None,
 
     ordinal = 0
     result.profile = prof.key
+    result.raw_text = _norm(body.text() or "")
     blocks = _find_blocks(body, prof.block_classes) or [body]
     for block in blocks:
         head_node = (block.css_first("h2 .title") or block.css_first("h2")

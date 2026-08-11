@@ -333,8 +333,10 @@ def test_질문의_낱말을_못_찾으면_단정하지_않는다(db):
     """
     _seed(db, url="/a", title="장학금 안내")
     r = ss.search(db, "장학금 통금시간", repo=repo)
-    assert r.outcome is ss.Outcome.AMBIGUOUS
-    assert "통금시간" in r.missing_tokens
+    # 보류든 '못 찾음' 이든 **답하지 않는 것**이 핵심이다.
+    # 후보를 드문 낱말로 뽑게 된 뒤로는 '통금시간' 으로 뽑아 0건이 나온다 —
+    # 더 정확한 판정이다.
+    assert r.outcome is not ss.Outcome.FOUND
 
 
 def test_답변에_경로와_출처가_들어간다(db):
@@ -446,3 +448,24 @@ def test_메뉴_라벨은_답이_아니다():
     assert ss.is_label("휴학")
     assert not ss.is_label("1종 장학금 : 등록금 전액")
     assert not ss.is_label("A+ | 4.5 | 95 ~ 100")
+
+
+def test_후보는_드문_낱말로_뽑는다(db):
+    """'복학 신청' 에서 '신청' 으로 후보를 뽑으면 목록이 넘쳐 정답이 잘린다.
+
+    실제로 '휴학 / 복학' 페이지에 '복학' 이 든 잎이 22개인데
+    후보 600개에 0개였다. 흔한 낱말은 후보를 넓히기만 하고 변별력이 없다.
+    """
+    # 흔한 낱말('안내')이 든 페이지를 여럿, 드문 낱말('복학')은 한 곳에만
+    for i in range(6):
+        _seed(db, url=f"/c{i}", title=f"안내{i}",
+              body=('<div class="com-box-01"><h2>안내</h2><ul>'
+                    f'<li>{i}번 안내 문서입니다. 신청 안내를 담고 있습니다</li>'
+                    '</ul></div>'), host="www.jbnu.ac.kr")
+    _seed(db, url="/target", title="휴학 / 복학",
+          body=('<div class="com-box-01"><h2>복학</h2><ul>'
+                '<li>복학 신청은 매 학기 개강 6주 전부터 가능합니다</li>'
+                '</ul></div>'), host="www.jbnu.ac.kr")
+    r = ss.search(db, "복학 신청", repo=repo)
+    assert r.top is not None
+    assert "복학" in r.top.page_title, "드문 낱말로 뽑았으면 정답이 후보에 든다"

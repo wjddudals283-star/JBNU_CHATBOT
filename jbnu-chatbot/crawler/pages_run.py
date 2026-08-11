@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import re
 import logging
 import pathlib
 import sys
@@ -200,8 +201,15 @@ def _process_chunk(rows, *, conn, stamp, delay, site_names):
 
         chars = _content_chars(res.sections)
         status = "ok" if chars >= MIN_CONTENT_CHARS else "empty"
-        note = ("HTML 에 본문이 없다 (스크립트로 그리는 페이지일 수 있음)"
-                if status == "empty" else None)
+        note = None
+        if status == "empty":
+            # ★ 'empty' 를 뭉쳐 세면 고칠 수 있는지 없는지 알 수가 없다.
+            #   원문에 글자가 없으면 학교가 안 올린 것이고 (우리가 할 게 없음),
+            #   글자는 있는데 섹션이 안 나오면 우리 파서가 못 읽은 것이다 (고칠 수 있음).
+            raw_chars = len(re.sub(r"\s+", "", res.raw_text or ""))
+            note = ("empty_nocontent 원문에 본문이 없다 (이미지·JS·빈 페이지)"
+                    if raw_chars < MIN_CONTENT_CHARS
+                    else f"empty_unparsed 원문 {raw_chars}자인데 섹션을 못 만들었다")
         repo.upsert_page(
             conn, parse_status=status, http_status=200,
             last_success_at=stamp if status == "ok" else None,

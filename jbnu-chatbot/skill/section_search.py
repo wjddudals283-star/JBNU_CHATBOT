@@ -71,6 +71,12 @@ TITLE_BOOST = 2.4
 # 못 미치면 고르지 않고 **페이지 단위로** 답한다 —
 # 틀린 문단을 확신 있게 인용하는 것보다 맞는 페이지를 통째로 보여주는 게 낫다.
 SECTION_MARGIN = 1.5
+# ★ 후보는 **드문 낱말**로 뽑는다. 순위는 전체 낱말로 매긴다.
+#   '복학 신청' 에서 '신청' 은 4.2% 섹션에 나온다. 그걸로 후보를 뽑으면
+#   목록이 넘쳐서 정답이 잘린다 — 실제로 '휴학 / 복학' 페이지에
+#   '복학' 이 든 잎이 22개인데 후보 600개에 **0개**였다.
+#   흔한 낱말은 후보를 넓히기만 하고 변별력이 없다.
+PROBE_DF_MAX = 0.02
 # ★ 길이 정규화를 넣어 봤다가 **되돌렸다**.
 #   진단은 맞았다 — 섹션 165개짜리 '수강신청(학부/대학원)' 이 복학·전과·휴학
 #   질문에서 전부 1등이었고, 전체 중앙값은 8개다. 커서 이긴 것이다.
@@ -496,7 +502,9 @@ def _attempt(conn, utterance: str, tokens: list[str], *, repo,
     top_w = weights.get(core, 0.0)
     required = [t for t in tokens
                 if weights.get(t, 0.0) >= top_w * CORE_MARGIN]
-    lookup = list(tokens) + sorted({a for v in expand.values() for a in v})
+    # 드문 낱말만으로 후보를 뽑는다. 하나도 없으면(전부 흔하면) 전부 쓴다.
+    probe = [t for t in tokens if df.get(t, 0) <= total * PROBE_DF_MAX] or list(tokens)
+    lookup = probe + sorted({a for t in probe for a in expand.get(t, ())})
     rows = repo.search_sections(conn, lookup, host=site_host)
     scored = score_rows(rows, tokens, weights, hq_boost=site_host is None,
                         expand=expand)
