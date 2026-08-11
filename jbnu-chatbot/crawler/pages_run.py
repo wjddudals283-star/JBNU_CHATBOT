@@ -27,6 +27,7 @@ import yaml
 
 from crawler import boilerplate as bp
 from crawler import fetch as fetch_mod
+from crawler import snapshots
 from crawler.parsers import jbnu_subview as SV
 from crawler.parsers import notice_list as NL
 from store import repo
@@ -129,7 +130,7 @@ CHUNK_SIZE = 400
 RESUME_WITHIN_HOURS = 20.0
 
 
-def _process_chunk(rows, *, conn, stamp, delay, site_names):
+def _process_chunk(rows, *, conn, stamp, delay, site_names, snapshot_root=None):
     """묶음 하나를 **끝까지** 처리한다 — 받고, 조각 세고, 파싱하고, 저장까지.
 
     ★ 전부 받은 뒤에 저장하면 중간에 죽었을 때 아무것도 안 남는다.
@@ -148,6 +149,10 @@ def _process_chunk(rows, *, conn, stamp, delay, site_names):
                                             f"HTTP {resp.status_code}")
                 else:
                     html[r["url"]] = resp.text
+                    # ★ 원문을 남긴다. 파서를 고쳤을 때 다시 긁지 않기 위해서다.
+                    #   '원문이 바뀌었다 → 재수집 / 해석이 바뀌었다 → 재파싱'
+                    if snapshot_root is not None:
+                        snapshots.save(r["url"], resp.text, snapshot_root)
             except Exception as e:  # noqa: BLE001
                 fetch_fail[r["url"]] = (None, f"{type(e).__name__}: {e}"[:200])
             time.sleep(delay)
@@ -254,6 +259,7 @@ def run(db_path: str, *, limit: int | None = None, delay: float = DEFAULT_DELAY,
     if verbose:
         print(f"대상 {len(rows)}페이지 · 간격 {delay}s · 묶음 {CHUNK_SIZE}")
 
+    snap_root = pathlib.Path(db_path).resolve().parent / "snapshots"
     conn = repo.connect(db_path)
     site_names = _site_names()
     tally = {k: 0 for k in repo.PARSE_STATUSES}
@@ -287,7 +293,7 @@ def run(db_path: str, *, limit: int | None = None, delay: float = DEFAULT_DELAY,
             chunk = rows[start:start + CHUNK_SIZE]
             t, sec, brd, ntc = _process_chunk(
                 chunk, conn=conn, stamp=stamp, delay=delay,
-                site_names=site_names)
+                site_names=site_names, snapshot_root=snap_root)
             for k, v in t.items():
                 tally[k] += v
             total_sections += sec
@@ -323,5 +329,8 @@ def run(db_path: str, *, limit: int | None = None, delay: float = DEFAULT_DELAY,
         print(f"  섹션 {total_sections} · 색인 잎 {summary['indexed_leaves']}")
         print(f"  게시판 {boards}곳 · 공지 {notices}건")
         print(f"  답변 가능 비율 {summary['answerable_ratio']:.1%}")
+        u = snapshots.usage(snap_root)
+        print(f"  원문 보관 {u['files']}개 · {u['mb']}MB "
+              f"(재파싱은 crawler.pages_reparse — 네트워크 안 씀)")
     return {"tally": tally, "sections": total_sections, "summary": summary,
             "boards": boards, "notices": notices, "pages": total}
