@@ -120,3 +120,46 @@ def test_선택지는_전부_문서에_있는_제목이다(conn):
     """★ 이게 되묻기가 확신 오답을 못 만드는 이유다."""
     for label in clarify.options(conn, PAGE, ["휴학"]):
         assert label in BLOCKS
+
+
+# ── 배선 (카카오 규격 · 안전) ─────────────────────────────────
+def test_라벨이_카카오_상한을_안_넘고_보내는_말은_안_줄인다():
+    """화면 라벨만 줄인다. **messageText 는 줄이지 않는다** —
+    줄이면 버튼을 눌렀을 때 검색이 달라진다."""
+    from skill import kakao, templates
+    long_label = "임신ㆍ출산ㆍ육아로 인한 휴학 신청 안내"
+    resp = templates.render_clarify("휴학", [long_label, "일반 휴학"],
+                                    where="본부 · 휴학/복학")
+    qr = resp["template"]["quickReplies"]
+    assert len(qr[0]["label"]) <= kakao.MAX_BTN_LABEL_V
+    assert qr[0]["messageText"] == long_label      # 안 줄였다
+
+
+def test_선택지가_많아도_열_개까지만():
+    from skill import kakao, templates
+    resp = templates.render_clarify("휴학", [f"{i} 휴학" for i in range(20)],
+                                    where="본부")
+    assert len(resp["template"]["quickReplies"]) <= kakao.MAX_QUICK_REPLIES
+
+
+def test_카카오_규격_검사를_통과한다():
+    from skill import kakao, templates
+    resp = templates.render_clarify(
+        "휴학", ["일반 휴학", "군입대 휴학", "임신ㆍ출산ㆍ육아 휴학"],
+        where="전북대학교 본부 · 휴학 / 복학")
+    assert kakao.validate(resp) == []
+
+
+def test_되묻기보다_안전_분기가_먼저다(tmp_path):
+    """새 응답 유형을 넣었다고 안전이 뒤로 밀리면 안 된다."""
+    from skill import server
+    db = tmp_path / "s.db"
+    c = repo.connect(db)
+    repo.init_db(c)
+    c.commit()
+    c.close()
+    payload = {"userRequest": {"utterance": "휴학하고 죽고싶어",
+                               "block": {"id": "b", "name": "info.search"}},
+               "action": {"params": {}}}
+    out = server.handle(db, "info.search", payload)
+    assert "109" in out["template"]["outputs"][0]["simpleText"]["text"]

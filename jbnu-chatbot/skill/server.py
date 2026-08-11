@@ -31,7 +31,7 @@ from fastapi import Depends, FastAPI, Request
 
 from skill import (aliases, auth, branch, calendar_search, ingest_api, kakao,
                    manual_answers, section_search,
-                   routing, safety, smalltalk, templates)
+                   clarify, routing, safety, smalltalk, templates)
 from store import repo
 
 log = logging.getLogger("jbnu.skill")
@@ -465,6 +465,36 @@ def _handle_section(db_path: pathlib.Path, utterance: str, *,
     #   여기서 가로채면 **대안 없는 답**으로 바꾸는 셈이 된다.
     if only_confident and result.outcome is not section_search.Outcome.FOUND:
         return None
+    # ★ 되묻기 — 문서가 갈래를 갖고 있고 질문이 아무것도 안 골랐을 때만.
+    #   섹션을 확신할 때는 건드리지 않는다. 페이지 단위로 내려간 자리만 대체한다.
+    #   링크 주고 알아서 찾으라는 것보다 버튼 한 번이 적은 노력이다.
+    if result.outcome is section_search.Outcome.FOUND and result.page_level \
+            and result.top is not None:
+        # ★ `with repo.connect(...)` 를 쓰면 안 된다 — sqlite3 의 with 는
+        #   트랜잭션 컨텍스트지 close 가 아니다. 연결이 샌다.
+        _c = repo.connect(db_path, readonly=True)
+        try:
+            opts = clarify.options(_c, result.top.page_url,
+                                   result.query_tokens or [])
+        finally:
+            _c.close()
+        chosen = clarify.already_narrowed(
+            utterance, opts, result.query_tokens or []) or \
+            clarify.narrowed_by_qualifier(utterance, opts,
+                                          result.query_tokens or [])
+        if opts and chosen:
+            # ★ 베타의 진짜 데이터 — 어느 선택지가 눌렸나.
+            #   등급으로는 원리상 안 잡힌다. 등급은 '얼마나 정확한 답인가' 를 재고
+            #   되묻기가 주는 건 '학생이 원한 답인가' 다. 다른 축이다.
+            log.info("[clarify] 선택 label=%r", chosen)
+        elif opts:
+            log.info("[clarify] 발동 q=%r opts=%s", utterance[:30], opts)
+            where = " · ".join(x for x in (result.top.site_name,
+                                           result.top.page_title) if x)
+            return templates.render_clarify(
+                result.subject or utterance, opts, where=where,
+                page_url=result.top.page_url)
+
     return templates.render_section(result, utterance=utterance)
 
 

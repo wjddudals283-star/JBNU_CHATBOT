@@ -483,6 +483,28 @@ def _source_line(hit) -> str:
     return f"📄 {where}" + (f" ({when} 기준)" if when else "")
 
 
+def render_clarify(subject: str, options: list[str], *, where: str,
+                   page_url: str = "") -> dict:
+    """되묻기 — 문서가 갈라 놓은 대로 물어본다.
+
+    ★ 선택지를 지어내지 않는다
+      전부 그 문서의 최상위 블록 **제목 그대로**다.
+      우리가 문장을 안 지어내는 것과 같은 이유로 없는 선택지가 나올 수 없다.
+
+    ★ 버튼이 새 발화를 보낸다 (messageText = 제목 전체)
+      상태를 안 들고 있어도 되고, 두 번째 발화엔 한정어가 있어서
+      다시 되묻지 않는다. 화면 라벨만 카카오 상한(14자)에 맞춰 줄인다 —
+      **보내는 말은 줄이지 않는다.** 줄이면 검색이 달라진다.
+    """
+    lines = [f"'{subject}'{J(subject, '은/는')} 여러 갈래로 나뉘어 있어요.",
+             "어느 쪽인지 골라 주시면 그 부분을 보여드릴게요.", ""]
+    if where:
+        lines.append(f"📄 {where}")
+    replies = [kakao.quick_reply(kakao._clip(o, kakao.MAX_BTN_LABEL_V), o)
+               for o in options[:kakao.MAX_QUICK_REPLIES]]
+    return kakao.response([kakao.simple_text("\n".join(lines).strip())], replies)
+
+
 def render_section(result, *, utterance: str = "") -> dict:
     """섹션 검색 결과 → 카카오 응답."""
     from skill.section_search import Outcome

@@ -52,6 +52,7 @@ if str(ROOT) not in sys.path:
 
 from skill import manual_answers  # noqa: E402
 from skill import section_search as ss  # noqa: E402
+from skill import clarify  # noqa: E402
 from skill import selfcontained  # noqa: E402
 
 
@@ -217,6 +218,24 @@ def bottleneck(conn, q: str, must: str) -> tuple[str, str]:
     return "커버리지", "DB 어디에도 없음"
 
 
+def _would_clarify(conn, q: str, r) -> bool:
+    """이 질문에 되묻기가 발동하나.
+
+    ★ 자를 학생이 받는 것에 맞춘다
+      되묻기를 켠 뒤로 '문서+발췌' 중 일부는 발췌 대신 **버튼**을 받는다.
+      리포트가 그걸 모르면 자와 화면이 어긋난다.
+    """
+    if not (r.outcome is ss.Outcome.FOUND and getattr(r, "page_level", False)
+            and getattr(r, "top", None) is not None):
+        return False
+    tk = r.query_tokens or []
+    opts = clarify.options(conn, r.top.page_url, tk)
+    if not opts:
+        return False
+    return not (clarify.already_narrowed(q, opts, tk)
+                or clarify.narrowed_by_qualifier(q, opts, tk))
+
+
 # 판정 칸. 순서가 곧 학생에게 좋은 순서다.
 #
 # ★ '문서까지' 를 다시 쪼갠다 — 안 쪼개면 인용 승격의 효과가 안 보인다
@@ -344,6 +363,7 @@ def main(argv: list[str] | None = None) -> int:
                 "matched": getattr(r, "candidates_matched", 0),
                 "depth": getattr(r, "answer_depth", 0),
                 "margin": round(getattr(r, "section_margin", 0.0) or 0.0, 2),
+                "clarify": _would_clarify(conn, q, r),
                 "page_level": bool(getattr(r, "page_level", False)),
             })
             if v not in CORRECT and expect == A:
@@ -382,6 +402,10 @@ def main(argv: list[str] | None = None) -> int:
               f" · △ 모름 {verdicts[MISS]} · ❌ 틀림 {verdicts[WRONG]}")
         print("  ★ 문서까지·쓸모없음은 안전하지만 정답으로 세지 않는다 — "
               "학생 질문에 답한 게 아니다")
+        nc = sum(1 for r in rows if r.get("clarify"))
+        if nc:
+            print(f"  ★ 이 중 {nc}건은 되묻기가 발동한다 — "
+                  "학생은 발췌 대신 버튼을 받는다 (2턴에 답이 온다)")
         print(f"응답 중앙값 {sorted(lat)[len(lat)//2]:.0f}ms")
 
         # ★ 62% 항목의 오답과 5% 항목의 오답을 같은 무게로 세면 안 된다.
