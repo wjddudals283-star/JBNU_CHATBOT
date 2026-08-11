@@ -112,8 +112,38 @@ def resolve(payload: dict, *, path_block: str | None = None,
         if hit:
             return hit, "intent.name:alias"
 
-    _remember(bid, bname or iname, ur.get("utterance", ""))
+    _remember(bid, bname or iname, ur.get("utterance", ""), shape=_shape(payload))
     return None, "unmapped"
+
+
+def _shape(payload: dict) -> str:
+    """블록 정보가 **어떤 모양으로** 비어 있는지.
+
+    ★ 왜 필요한가
+      '없다' 를 뭉쳐 세면 고칠 수 있는지 없는지 알 수가 없다 —
+      크롤의 empty 갈래를 쪼갤 때와 같은 문제다.
+      우리 코드는 `block.get("id") or ""` 로 셋을 다 "" 로 접어버려서
+      로그만 봐서는 카카오가 뭘 보냈는지 알 수 없었다.
+    """
+    ur = payload.get("userRequest") or {}
+    if "block" not in ur:
+        return "no-block-key"
+    b = ur.get("block")
+    if b is None:
+        return "block-null"
+    if not isinstance(b, dict):
+        return f"block-{type(b).__name__}"
+    parts = []
+    for k in ("id", "name"):
+        if k not in b:
+            parts.append(f"{k}:absent")
+        elif b[k] is None:
+            parts.append(f"{k}:null")
+        elif not str(b[k]).strip():
+            parts.append(f"{k}:empty")
+        else:
+            parts.append(f"{k}:set")
+    return " ".join(parts)
 
 
 def by_utterance(utterance: str,
@@ -153,10 +183,23 @@ def is_fallback(payload: dict, *, path_block: str | None = None,
                     엉뚱한 도메인 블록이 검색 결과를 뱉는다. 보수적으로 간다.
       폴백 블록    = 애초에 분류에 실패한 말 → **검색이 정확히 할 일이다.**
     """
+    ur = payload.get("userRequest") or {}
+    block = ur.get("block") or {}
+
+    # ★ 가장 확실한 신호는 이름이 아니라 **블록 정보가 비어 있는 것**이다 (실측)
+    #   폴백으로 온 요청에는 block 이 아예 안 실려 온다.
+    #     02:11:11  [skill] block='-' via=unmapped utterance='복학 신청'
+    #   이름 후보를 맞히는 전략은 총학이 이름을 바꾸면 깨지지만,
+    #   이건 플랫폼 동작이라 더 안정적이다.
+    #
+    #   그리고 '이름이 있는데 우리가 모르는 블록' 과 안전하게 갈린다 —
+    #   그쪽은 총학이 만든 블록이라 함부로 검색에 태우면 안 된다.
+    if not str(block.get("id") or "").strip() and        not str(block.get("name") or "").strip() and not path_block:
+        return True
+
     names = {_norm(n) for n in (load(config_path).get("fallback_blocks") or [])}
     if not names:
         return False
-    block = (payload.get("userRequest") or {}).get("block") or {}
     for cand in (path_block, block.get("name"),
                  (payload.get("intent") or {}).get("name")):
         if cand and _norm(str(cand)) in names:
@@ -164,18 +207,20 @@ def is_fallback(payload: dict, *, path_block: str | None = None,
     return False
 
 
-def _remember(block_id: str, name: str, utterance: str) -> None:
+def _remember(block_id: str, name: str, utterance: str, *,
+              shape: str = "") -> None:
     """매핑 안 된 블록을 기록한다. 차단만 하지 않고 해제 경로를 준다."""
-    key = f"{block_id}|{name}"
+    key = f"{block_id}|{name}|{shape}"
     if key in _unmapped:
         _unmapped[key]["hits"] += 1
         return
     if len(_unmapped) >= MAX_UNMAPPED:
         _unmapped.popitem(last=False)
-    _unmapped[key] = {"block_id": block_id, "block_name": name,
+    _unmapped[key] = {"block_id": block_id, "block_name": name, "shape": shape,
                       "sample_utterance": utterance[:60], "hits": 1}
-    log.warning("[routing] UNMAPPED block id=%r name=%r utterance=%r — "
-                "config/blocks.yaml 에 한 줄 추가하면 된다", block_id, name, utterance[:40])
+    log.warning("[routing] UNMAPPED block id=%r name=%r shape=%s utterance=%r — "
+                "config/blocks.yaml 에 한 줄 추가하면 된다",
+                block_id, name, shape, utterance[:40])
 
 
 def unmapped_blocks() -> list[dict]:
