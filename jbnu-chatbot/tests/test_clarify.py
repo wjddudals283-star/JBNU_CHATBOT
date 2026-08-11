@@ -163,3 +163,22 @@ def test_되묻기보다_안전_분기가_먼저다(tmp_path):
                "action": {"params": {}}}
     out = server.handle(db, "info.search", payload)
     assert "109" in out["template"]["outputs"][0]["simpleText"]["text"]
+
+
+def test_존댓말로_물어도_같은_답이_나온다():
+    """★ 학생은 '휴학' 이라고 안 치고 '휴학이요' 라고 친다.
+
+    블록 매칭에 실패한 말이 대부분 폴백으로 오고, 거기서 이 형태가 많다.
+    실측:  '휴학이요'       → NOT_FOUND
+           '휴학 어떻게 해요' → "'해요' 관련 안내는 못 찾았어요"
+    """
+    from skill import section_search as ss
+    for u in ("휴학이요", "휴학 어떻게 해요", "휴학하려면", "휴학요"):
+        assert ss.tokenize(u) == ["휴학"], u
+
+
+def test_두_글자_명사는_안_깎는다():
+    """'요' 를 떼되 '개요' · '필요' · '주요' 는 그대로 살려야 한다."""
+    from skill import section_search as ss
+    for w in ("개요", "필요", "주요", "수요", "중요"):
+        assert ss.tokenize(w) == [w], w
