@@ -158,6 +158,30 @@ QUESTIONS: list[tuple[str, str, str, str]] = [
 ]
 
 
+def shorten(conn, q: str, *, repo) -> str:
+    """질문을 학생이 실제로 치는 길이로 줄인다.
+
+    ★ 46문항이 전부 구체적으로 쓰여 있었다 — 문항을 상상해서 만들면 그렇게 된다.
+          우리가 쓴 것   '휴학 어떻게 해'
+          학생이 치는 것  '휴학'
+      되묻기가 필요한 자리가 통째로 측정에서 빠져 있었다.
+      그리고 자족성은 짧은 질문을 원리상 못 고친다 —
+      답이 여럿인 것을 하나로 만들 수는 없다.
+
+    ★ 짧은 형태를 손으로 쓰지 않는다
+      우리 토크나이저가 **가장 무겁게 보는 낱말**을 남긴다.
+      드문 낱말일수록 무겁다 — 그게 곧 질문의 핵심어다.
+      손으로 고르면 우리가 고치고 싶은 쪽으로 고르게 된다.
+    """
+    toks = ss.tokenize(q)
+    if len(toks) <= 1:
+        return q
+    total = repo.section_total(conn)
+    df = {t: repo.token_doc_freq(conn, t) for t in toks}
+    w = ss._weights(toks, total, df)
+    return max(toks, key=lambda t: w.get(t, 0.0))
+
+
 def bottleneck(conn, q: str, must: str) -> tuple[str, str]:
     """놓친 문항의 병목이 **커버리지인지 검색인지** 가른다.
 
@@ -245,17 +269,38 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--db", required=True)
     ap.add_argument("--json", default="")
     ap.add_argument("--quiet", action="store_true")
+    ap.add_argument("--short", action="store_true",
+                    help="학생이 실제로 치는 길이(핵심어 하나)로 잰다")
     args = ap.parse_args(argv)
 
     conn = repo.connect(args.db)
     try:
         summary = repo.coverage_summary(conn)
         print(f"색인 잎 {summary['indexed_leaves']:,} · 인용 가능 페이지 "
-              f"{summary['by_status']['ok']:,}\n")
+              f"{summary['by_status']['ok']:,}")
+        if args.short:
+            print("★ 짧은 질문 모드 — 학생이 실제로 치는 길이로 잰다")
+        print()
 
         rows, lat = [], []
         verdicts: collections.Counter = collections.Counter()
-        for topic, q, expect, must in QUESTIONS:
+        skipped_short = []
+        for topic, q0, expect, must in QUESTIONS:
+            q = q0
+            if args.short:
+                q = shorten(conn, q0, repo=repo)
+                # ★ 질문을 줄이면 기대값도 같이 줄여야 한다.
+                #   '수강신청 학점 상한' 의 must 는 '학점' 인데, 짧은 질문은
+                #   학점을 묻지 않는다. 자를 안 바꾸고 대상만 바꾸면
+                #   측정이 인공물을 만들어낸다 — 실제로 확신 오답 4건이 전부 그거였다.
+                #   짧은 질문에 요구할 수 있는 건 하나뿐이다: **그것에 대한 답인가.**
+                if q != q0:
+                    if expect == D:
+                        # 보류해야 하는 이유가 한정어에 있었다면
+                        # 한정어를 뗀 질문은 더 이상 같은 질문이 아니다.
+                        skipped_short.append((q0, q))
+                        continue
+                    must = q
             t0 = time.perf_counter()
             # 공지는 제목 검색이 담당한다. 같은 잣대로 잰다.
             # ★ 총학이 직접 확인한 답이 먼저다 — 서버 라우팅과 같은 순서로 잰다.
@@ -273,7 +318,8 @@ def main(argv: list[str] | None = None) -> int:
             verdicts[v] += 1
             top = getattr(r, "top", None) or (r.hits[0] if r.hits else None)
             rows.append({
-                "topic": topic, "q": q, "expect": expect, "verdict": v,
+                "topic": topic, "q": q, "q_full": q0, "expect": expect,
+                "verdict": v,
                 "why": why, "outcome": r.outcome.value,
                 "site": getattr(top, "site_name", "") if top else "",
                 "path": (getattr(top, "quote_path", "")
@@ -311,6 +357,11 @@ def main(argv: list[str] | None = None) -> int:
 
         n = len(rows)
         ok = sum(verdicts[v] for v in CORRECT)
+        if args.short and skipped_short:
+            print(f"짧은 질문 모드에서 뺀 보류 문항 {len(skipped_short)}건 — "
+                  "한정어를 떼면 같은 질문이 아니다")
+            for a, b in skipped_short:
+                print(f"  {a} → {b}")
         print(f"\n{'='*72}")
         print(f"균등 정확도 {ok}/{n} = {ok/n:.0%}")
         print(f"  ✅ 확신 {verdicts[SURE]} · ✅ 보류 {verdicts[DEFER_OK]}"
