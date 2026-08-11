@@ -18,6 +18,7 @@ import datetime as dt
 from typing import Any
 
 from skill import kakao
+from skill.josa import attach as J
 from skill.branch import Branch, MealAnswer
 
 MEAL_KO = {"breakfast": "아침", "lunch": "점심", "dinner": "저녁"}
@@ -509,7 +510,7 @@ def render_section(result, *, utterance: str = "") -> dict:
         # ★ 조회할 자료가 아직 없다. '그런 내용이 없다'와 다른 말이다.
         return kakao.response(
             [kakao.simple_text(
-                f"'{subject}' 를 찾지 못했어요.\n"
+                f"'{subject}'{J(subject, '을/를')} 찾지 못했어요.\n"
                 f"학교 안내 페이지를 아직 가져오지 못했어요.\n\n{SEARCH_HINT}")],
             [kakao.quick_reply("처음으로")])
 
@@ -517,7 +518,7 @@ def render_section(result, *, utterance: str = "") -> dict:
         # ★ 조회는 했다. 몇 개를 봤는지 밝힌다 — 안 찾아보고 없다고 한 것과 다르다.
         return kakao.response(
             [kakao.simple_text(
-                f"'{subject}' 에 대한 안내를 찾지 못했어요.\n"
+                f"'{subject}'에 대한 안내를 찾지 못했어요.\n"
                 f"모아둔 안내 {result.searched_sections:,}건을 확인했어요.\n\n"
                 f"{SEARCH_HINT}")],
             [kakao.quick_reply("처음으로")])
@@ -538,10 +539,13 @@ def render_section(result, *, utterance: str = "") -> dict:
         if missing:
             # 질문의 낱말을 못 찾았으면 그 사실을 먼저 말한다.
             # 비슷한 걸 보여주되 답이라고 말하지 않는다.
-            header = f"'{' '.join(missing)}' 관련 안내는 못 찾았어요"
-            tail = (f"'{' '.join(missing)}' 가 들어간 안내는 없었어요. "
+            miss = " ".join(missing)
+            header = f"'{miss}' 관련 안내는 못 찾았어요"
+            tail = (f"'{miss}'{J(miss, '이/가')} 들어간 안내는 없었어요. "
                     f"비슷한 것들이에요.\n\n{SEARCH_HINT}")
         else:
+            # ★ 조사는 바로 앞말('안내')을 따른다. subject 를 따르게 걸었다가
+            #   "'통금' 안내이 여러 곳에" 가 나왔다 — 원래 맞던 걸 깬 것이다.
             header = f"'{subject}' 안내가 여러 곳에 있어요"
             tail = ("학과마다 내용이 달라요. 어느 학과인지 알려주시면 그곳만 찾아드릴게요."
                     if multi_site else "어느 쪽을 찾으시는지 눌러서 확인해 주세요.")
@@ -558,10 +562,11 @@ def render_section(result, *, utterance: str = "") -> dict:
     if getattr(result, "page_level", False):
         where = f"{hit.site_name} · {hit.page_title}" if hit.site_name else hit.page_title
         head, _ = _quote_block(hit)
-        lines = [f"'{subject}' 는 이 문서에 있어요.", "", f"📄 {where}"]
+        lines = [f"'{subject}'{J(subject, '은/는')} 이 문서에 있어요.",
+                 "", f"📄 {where}"]
         via = getattr(result, "via_synonym", "")
         if via:
-            lines.append(f"('{via}' 라는 이름으로 올라와 있어요)")
+            lines.append(f"('{via}'라는 이름으로 올라와 있어요)")
         lines += ["", f"[{hit.quote_path or hit.path}]", head[:PAGE_LEVEL_BUDGET]]
         lines += ["", "어느 부분인지 딱 집지는 못했어요. 아래에서 확인해 주세요.",
                   hit.page_url]
@@ -576,7 +581,7 @@ def render_section(result, *, utterance: str = "") -> dict:
     #   '경로를 표시한다' 는 원칙의 연장이다.
     via = getattr(result, "via_synonym", "")
     if via:
-        lines.append(f"('{via}' 라는 이름으로 올라와 있어요)")
+        lines.append(f"('{via}'라는 이름으로 올라와 있어요)")
     lines += ["", quote]
     if clipped:
         # 자른 사실을 숨기지 않는다. 잘린 조건은 없는 조건처럼 읽힌다.
@@ -617,7 +622,7 @@ def render_notices(result, *, utterance: str = "") -> dict:
         # 조회는 했다. 몇 건을 봤는지 밝힌다.
         return kakao.response(
             [kakao.simple_text(
-                f"'{subject}' 가 제목에 든 공지를 찾지 못했어요.\n"
+                f"'{subject}'{J(subject, '이/가')} 제목에 든 공지를 찾지 못했어요.\n"
                 f"모아둔 공지 {result.searched_total:,}건을 확인했어요.\n\n"
                 f"제목에 없을 뿐 본문에는 있을 수 있어요.\n{SEARCH_HINT}")],
             [kakao.quick_reply("처음으로")])
