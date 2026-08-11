@@ -30,6 +30,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Sequence
 
+from skill import selfcontained
+
 # 질문을 이루지만 내용은 없는 말. 이것만 남으면 무엇을 묻는지 모르는 것이다.
 STOPWORDS = {
     "뭐야", "뭐", "머야", "알려줘", "알려", "어떻게", "어떡해", "언제", "어디",
@@ -335,14 +337,23 @@ def _weights(tokens: Sequence[str], total: int, df: dict[str, int]) -> dict[str,
 
 # 메뉴·목차 라벨 — 답이 아니라 이름표다.
 # '증명서발급' 한 낱말이 '증명서 발급' 질문에 가장 잘 맞아 목차가 1등이 됐다.
-# 띄어쓰기도 숫자도 없는 짧은 말은 문장이 아니다.
+#
+# ★ 이 규칙(12자·공백 없음·숫자 없음)은 같은 생각의 약한 판본이었다
+#   '사유 발생시'(공백 있음) · '월간 일정' · '가. 사회봉사' 를 못 잡았고,
+#   그것들이 1등이 되어 학생에게 조각을 보여줬다.
+#   잣대를 selfcontained 로 합친다 — 인용과 랭킹이 같은 기준을 써야 한다.
 LABEL_MAX_CHARS = 12
+
+# 조각은 버리지 않고 **감점**한다.
+# ★ 버리면 그 페이지를 아예 못 찾을 수 있다.
+#   조각뿐인 페이지도 '이 문서에 있어요' 로는 답이 된다.
+#   원칙 그대로다 — 섹션을 못 고르겠으면 고르지 말고 페이지로.
+FRAGMENT_PENALTY = 0.5
 
 
 def is_label(text: str) -> bool:
-    t = (text or "").strip()
-    return (0 < len(t) <= LABEL_MAX_CHARS
-            and " " not in t and not any(c.isdigit() for c in t))
+    """혼자 떼어놨을 때 뜻이 안 서는 말인가. selfcontained 의 반대."""
+    return not selfcontained.is_self_contained(text)
 
 
 def score_rows(rows: list[dict[str, Any]], tokens: Sequence[str],
@@ -352,8 +363,7 @@ def score_rows(rows: list[dict[str, Any]], tokens: Sequence[str],
     for r in rows:
         text = r.get("text") or ""
         path = r.get("path") or ""
-        if is_label(text):
-            continue
+        fragment = is_label(text)
         matched, s = [], 0.0
         for t in tokens:
             forms = [t] + sorted((expand or {}).get(t, ()))
@@ -382,6 +392,11 @@ def score_rows(rows: list[dict[str, Any]], tokens: Sequence[str],
         # 표 행인데 표 제목에 질문의 말이 하나도 없으면 스쳐 지나간 것이다
         if r.get("kind") == "table_row" and not any(t in path for t in matched):
             s *= TABLE_OFFTOPIC_PENALTY
+        # ★ 혼자서 뜻이 안 서는 조각은 1등이 될 수 없다.
+        #   길이가 아니라 자족성이다 — '준공년도 : 1995년'(11자)은 살고
+        #   '여성건강간호학교실'(9자)은 죽는다. 길이 정규화가 세 번 진 이유다.
+        if fragment:
+            s *= FRAGMENT_PENALTY
 
         # ★ 제목 가산은 **페이지 점수**에만 얹는다. 섹션 점수(s)는 건드리지 않는다.
         title = r.get("page_title") or ""
