@@ -471,7 +471,8 @@ CREATE TABLE IF NOT EXISTS page_section (
   ordinal       INTEGER NOT NULL,
   depth         INTEGER NOT NULL,
   kind          TEXT NOT NULL
-                CHECK (kind IN ('block','list','table','table_row')),
+                CHECK (kind IN ('block','list','table','table_row',
+                                'deflist','deflist_row','paragraph')),
   path          TEXT NOT NULL,      -- '교내 장학금 > 금액별 분류'
   text          TEXT NOT NULL,      -- 정규화본 — 매칭용
   raw_text      TEXT NOT NULL,      -- 원문 — 인용용 (요약 금지)

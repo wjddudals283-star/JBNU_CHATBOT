@@ -40,6 +40,17 @@ DB_PATH = pathlib.Path(os.environ.get("JBNU_DB_PATH", str(_DATA / "jbnu.db")))
 
 KST = dt.timezone(dt.timedelta(hours=9))
 
+
+def now_kst() -> dt.datetime:
+    """현재 시각을 읽는 **유일한** 자리.
+
+    ★ 시계를 여러 곳에서 읽으면 테스트가 달력에 따라 깨진다.
+      실제로 자정을 넘기면서 세 개가 깨졌다 — 픽스처는 날짜가 박혀 있는데
+      엔드포인트는 진짜 시계를 봤기 때문이다.
+      한 군데로 모으면 테스트가 시각을 갈아끼울 수 있다.
+    """
+    return dt.datetime.now(KST)
+
 # 별칭 → facility. 오픈빌더 엔티티가 canonical 값을 주지만, 방어적으로 매핑한다.
 FACILITY_BY_ALIAS = {
     "후생관": "jbnu:facility/후생관-푸드코트",
@@ -146,7 +157,7 @@ def create_app(db_path: pathlib.Path | None = None, *,
             n = c.execute("SELECT COUNT(*) c FROM meal_service").fetchone()["c"]
             c.close()
             s = app.state.scheduler
-            now = dt.datetime.now(KST)
+            now = now_kst()
             from crawler import schedule as sched_mod
             c2 = conn()
             try:
@@ -195,7 +206,7 @@ def create_app(db_path: pathlib.Path | None = None, *,
                       MAX(started_at) AS last_run
                  FROM crawl_run GROUP BY source_key"""
         ).fetchall()
-        now = dt.datetime.now(KST)
+        now = now_kst()
         out = []
         for r in rows:
             age = (repo.staleness_hours(r["last_ok"], now)
@@ -334,7 +345,7 @@ UPCOMING_DEFAULT_DAYS = 14
 def _handle_upcoming(db_path: pathlib.Path, params: dict, detail: dict,
                      utterance: str = "", *,
                      now: dt.datetime | None = None) -> dict:
-    now = now or dt.datetime.now(KST)
+    now = now or now_kst()
     today = now.date().isoformat()
 
     # ★ 한 블록에 두 종류 발화가 섞여 들어온다.
@@ -413,7 +424,7 @@ def _resolve_days(params: dict, utterance: str) -> int:
 
 def _handle_meal(db_path: pathlib.Path, params: dict, detail: dict,
                  utterance: str = "", *, now: dt.datetime | None = None) -> dict:
-    now = now or dt.datetime.now(KST)
+    now = now or now_kst()
 
     # ★ params 가 비면 발화에서 보완한다.
     #   오픈빌더는 발화마다 태깅해야 params 를 주는데, 학생 자유 발화는

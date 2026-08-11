@@ -344,6 +344,8 @@ def test_freshness_엔드포인트가_stale을_알린다(db, monkeypatch):
     from skill import auth
     token = "freshness-token-0123456789"
     monkeypatch.setenv(auth.TOKEN_ENV, token)
+    # 픽스처가 2026-08-10 로 고정이므로 서버 시계도 고정한다.
+    monkeypatch.setattr(server, "now_kst", lambda: NOW)
     app = server.create_app(db, with_scheduler=False)
     from fastapi.testclient import TestClient
     client = TestClient(app)
@@ -370,3 +372,18 @@ def test_freshness_엔드포인트가_stale을_알린다(db, monkeypatch):
     old = {s["source_key"]: s for s in fr2["sources"]}["likehome_week_menu"]
     assert old["stale"] is True and old["age_hours"] > 24
     assert fr2["any_stale"] is True
+
+
+def test_서버는_시계를_한_군데서만_읽는다():
+    """달력에 따라 깨지는 테스트는 없는 것만 못하다.
+
+    시계를 여러 곳에서 읽으면 테스트가 시각을 갈아끼울 수 없고,
+    자정을 넘기는 순간 조용히 깨진다 — 실제로 세 개가 그렇게 깨졌다.
+    """
+    import re
+    src = pathlib.Path(server.__file__).read_text(encoding="utf-8")
+    body = src.split("def now_kst()", 1)[1].split("\n\n\n", 1)[1]
+    offenders = re.findall(r"dt\.datetime\.now\(", body)
+    assert not offenders, (
+        f"now_kst() 밖에서 시계를 {len(offenders)}번 읽는다 — "
+        "테스트가 시각을 고정할 수 없게 된다")

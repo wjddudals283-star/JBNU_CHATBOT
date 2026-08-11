@@ -144,6 +144,10 @@ def test_비슷한_이름이라고_아무_핸들러로_안_보낸다():
 @pytest.fixture()
 def client(db, monkeypatch):
     monkeypatch.setenv(auth.TOKEN_ENV, TOKEN)
+    # ★ 시계를 고정한다. 픽스처 날짜는 박혀 있는데 서버가 진짜 시계를 보면
+    #   자정을 넘기는 순간 테스트가 깨진다 — 실제로 그렇게 깨졌다.
+    #   달력에 따라 결과가 달라지는 테스트는 없는 것만 못하다.
+    monkeypatch.setattr(server, "now_kst", lambda: NOW)
     return TestClient(server.create_app(db, with_scheduler=False))
 
 

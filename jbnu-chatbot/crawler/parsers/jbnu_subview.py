@@ -45,18 +45,50 @@ SOURCE_KEY = "jbnu_subview"
 EXTRACTION_METHOD = "html_selector"
 CONFIDENCE = 0.95
 
-CONTENT_SELECTORS = ("#sp-content .com-inner-1300", "#sp-content", "#content")
-# 본문 블록 래퍼 — 전수 조사에서 확인된 두 종류. class 토큰으로 비교한다.
-BLOCK_CLASSES = ("com-box-01", "com-box-04")
+@dataclass(frozen=True)
+class Profile:
+    """CMS 한 종류의 지문. 값은 전부 전수 조사에서 왔다 (docs/source_inventory.md)."""
+    key: str
+    content_selectors: tuple[str, ...]
+    block_classes: tuple[str, ...]
+    drop_selectors: tuple[str, ...]
+
+
+# 본부 www.jbnu.ac.kr — /web/ 한국어 204페이지 중 199개(98%)
+WWW = Profile(
+    key="jbnu_www",
+    content_selectors=("#sp-content .com-inner-1300", "#sp-content", "#content"),
+    block_classes=("com-box-01", "com-box-04"),
+    drop_selectors=("script", "style", "nav", ".dep-list-01", ".dep-list-02",
+                    ".dep-list-03", ".util-list", ".breadcrumb", ".sns-list",
+                    ".com-page-bottom-wrap-02", ".com-page-bottom-01",
+                    ".hide-menu-list", ".com-brd-list-01", ".com-brd-list-04",
+                    ".board_layerPop", ".com-btn-box-02"),
+)
+# 학과·기관 통합 CMS — 열린 호스트 237개 중 207개
+DEPT = Profile(
+    key="jbnu_dept",
+    content_selectors=("#_contentBuilder",),
+    block_classes=("_obj",),
+    # ★ .hidden — 사람에게 보이지 않는 요소는 인용문이 아니다.
+    #   CMS 내부 마커(fnctId=greeting,fnctNo=0)가 여기 들어 있어 본문으로 샜다.
+    # ★ .artclTable / .artclSerch — 게시판 목록. 공지는 별도 크롤러가 담당한다.
+    #   여기 두면 '총 198 건이 등록되었습니다' 같은 게시판 문구가 인용문에 섞인다.
+    drop_selectors=("script", "style", "nav", ".hidden", ".widgetInfo",
+                    ".artclTable", ".artclSerch", ".artclList", ".board-list",
+                    ".paging", ".sns-list", "#sideA", "#footerSec"),
+)
+PROFILES = (WWW, DEPT)
+
+CONTENT_SELECTORS = WWW.content_selectors      # 하위 호환
+BLOCK_CLASSES = WWW.block_classes
 # 본문이 아닌 것 — 네비게이션·유틸·게시판. 구조적으로 확실한 것만 넣는다.
 # 게시판(com-brd-list-*)은 별도 공지 크롤러가 담당한다.
-DROP_SELECTORS = ("script", "style", "nav", ".dep-list-01", ".dep-list-02",
-                  ".dep-list-03", ".util-list", ".breadcrumb", ".sns-list",
-                  ".com-page-bottom-wrap-02", ".com-page-bottom-01",
-                  ".hide-menu-list", ".com-brd-list-01", ".com-brd-list-04",
-                  ".board_layerPop", ".com-btn-box-02")
+DROP_SELECTORS = WWW.drop_selectors
 _LAST_MODIFIED = re.compile(r"최종수정일.{0,200}?(\d{4}-\d{2}-\d{2})", re.S)
 MIN_TABLE_ROWS = 2          # 이보다 적으면 레이아웃용 표로 본다
+MIN_DEFLIST_ROWS = 2        # 정의목록도 같다
+MIN_PARAGRAPH_CHARS = 25    # 이보다 짧은 문단은 캡션·라벨이지 본문이 아니다
 
 
 @dataclass
@@ -92,6 +124,7 @@ class ParseResult:
     last_modified: str | None = None
     sections: list[Section] = field(default_factory=list)
     quarantined: list[tuple[object, str]] = field(default_factory=list)
+    profile: str = ""                            # 어느 CMS 로 읽었나
     pruned: dict = field(default_factory=dict)   # 보일러플레이트 제거 보고
     # ingest 호환
     meals: list = field(default_factory=list)
@@ -141,7 +174,7 @@ def _section_key(page_url: str, path: list[str], ordinal: int) -> str:
     return "sec-" + hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
 
 
-def _find_blocks(body):
+def _find_blocks(body, block_classes=None):
     """본문 블록을 문서 순서대로 찾는다.
 
     css('a, b') 는 문서 순서를 보장하지 않는다 — 예전에 td/th 에서 당한 적이 있다.
@@ -149,7 +182,7 @@ def _find_blocks(body):
     """
     chosen, chosen_ids = [], set()
     for n in body.traverse(include_text=False):
-        if n.tag != "div" or not (_classes(n) & set(BLOCK_CLASSES)):
+        if n.tag != "div" or not (_classes(n) & set(block_classes or BLOCK_CLASSES)):
             continue
         p = n.parent
         nested = False
@@ -248,25 +281,89 @@ def _emit_table(table, result: ParseResult, page_url: str, path: list[str],
     return ordinal
 
 
+def _emit_deflist(dl, result: ParseResult, page_url: str, path: list[str],
+                  depth: int, ordinal: int, *, parent_key: str,
+                  block_hash: str) -> int:
+    """<dl><dt>1952</dt><dd>창과</dd></dl> — 표와 같다.
+
+    항목 하나만 인용하면 '1952' 만 남는다. 맥락 없는 값은 오답이다.
+    그래서 행으로 색인하고 목록 전체를 인용한다.
+    """
+    pairs: list[tuple[str, str]] = []
+    label = ""
+    for node in dl.iter(include_text=False):
+        if node.tag == "dt":
+            label = _norm(node.text())
+        elif node.tag == "dd":
+            v = _norm(node.text())
+            if label or v:
+                pairs.append((label, v))
+    pairs = [(k, v) for k, v in pairs if k or v]
+    if len(pairs) < MIN_DEFLIST_ROWS:
+        return ordinal
+
+    raw = "\n".join(f"{k} | {v}".strip(" |") for k, v in pairs)
+    my_path = path + [_table_label(dl, path[-1] if path else "목록")]
+    key = _section_key(page_url, my_path, ordinal)
+    result.sections.append(Section(
+        key=key, page_url=page_url, path=my_path, text=_norm(raw), raw_text=raw,
+        depth=depth, ordinal=ordinal, is_leaf=False, kind="deflist",
+        parent_key=parent_key, quote_key=key,
+        block_hash=block_hash, section_hash=_hash(raw)))
+    ordinal += 1
+
+    for k, v in pairs:
+        line = f"{k} | {v}".strip(" |")
+        result.sections.append(Section(
+            key=_section_key(page_url, my_path + [k or v[:20]], ordinal),
+            page_url=page_url, path=my_path + ([k] if k else []),
+            text=line, raw_text=line, depth=depth + 1, ordinal=ordinal,
+            is_leaf=True, kind="deflist_row", parent_key=key, quote_key=key,
+            block_hash=block_hash, section_hash=_hash(line)))
+        ordinal += 1
+    return ordinal
+
+
 # ---------------------------------------------------------------- 본체
 
-def content_root(html: str):
-    """본문 컨테이너를 찾아 네비게이션·게시판을 걷어낸 노드를 돌려준다.
+def detect_profile(tree) -> Profile | None:
+    """어느 CMS 인지는 **컨테이너가 있느냐**로 정한다. 주소로 짐작하지 않는다.
+
+    주소 규칙은 바뀌지만 마크업은 CMS 를 갈아엎어야 바뀐다.
+    """
+    for prof in PROFILES:
+        for sel in prof.content_selectors:
+            if tree.css_first(sel) is not None:
+                return prof
+    return None
+
+
+def content_root(html: str, profile: Profile | None = None):
+    """본문 컨테이너를 찾아 네비게이션·게시판을 걷어낸 (트리, 본문, 프로필).
 
     조각 수집과 파싱이 **같은 것**을 보게 하려면 이 함수를 공유해야 한다.
     보는 대상이 다르면 탐지한 해시가 파싱 때 안 맞는다.
     """
     tree = HTMLParser(html)
+    prof = profile or detect_profile(tree)
+    if prof is None:
+        raise ParseError(
+            "본문 컨테이너를 찾지 못했다 "
+            f"(알고 있는 CMS: {[p.key for p in PROFILES]})")
+
     body = None
-    for sel in CONTENT_SELECTORS:
+    for sel in prof.content_selectors:
         body = tree.css_first(sel)
         if body is not None:
             break
-    if body is None:
-        raise ParseError(f"본문 컨테이너를 찾지 못했다 (selectors={CONTENT_SELECTORS})")
 
-    for sel in DROP_SELECTORS:
+    for sel in prof.drop_selectors:
         for n in body.css(sel):
+            n.decompose()
+    # HTML 주석 — CMS 내부 마커(fnctId=hist,fnctNo=130)가 본문 텍스트로 새어 나온다.
+    # 사람에게 보이지 않는 글자가 인용문에 섞이면 그건 원문이 아니다.
+    for n in list(body.traverse(include_text=True)):
+        if n.tag == "_comment":
             n.decompose()
 
     # 접근 거부 판정은 **스크립트를 걷어낸 본문 텍스트**로 한다.
@@ -274,19 +371,29 @@ def content_root(html: str):
     # 실제로 107페이지 중 18개를 그렇게 오탐했다. 조건문 속 문구는 관측이 아니다.
     if re.search(r"접근이 거부|접근권한이 없", body.text() or ""):
         raise ParseError("403 — 접근 거부 페이지")
-    return tree, body
+    return tree, body, prof
 
 
-def page_fragments(html: str) -> dict[str, str]:
+def page_fragments(html: str, profile: Profile | None = None) -> dict[str, str]:
     """보일러플레이트 1차 수집용 — 이 페이지 본문의 조각 해시."""
-    _, body = content_root(html)
+    _, body, _ = content_root(html, profile)
     return boilerplate.fragments(body)
 
 
-def parse(html: str, *, page_url: str = "",
-          boilerplate_report=None) -> ParseResult:
+def fragments_with_profile(html: str) -> tuple[str, dict[str, str]]:
+    """조각과 함께 **어느 CMS 인지**를 돌려준다.
+
+    보일러플레이트는 CMS 마다 따로 세야 한다. 섞어서 세면 본부 템플릿이
+    학과 페이지 수에 희석돼 임계를 못 넘고, 반대도 마찬가지다.
+    """
+    _, body, prof = content_root(html, None)
+    return prof.key, boilerplate.fragments(body)
+
+
+def parse(html: str, *, page_url: str = "", boilerplate_report=None,
+          profile: Profile | None = None) -> ParseResult:
     """boilerplate_report 를 주면 파싱 **전에** 템플릿 조각을 DOM 에서 잘라낸다."""
-    tree, body = content_root(html)
+    tree, body, prof = content_root(html, profile)
     prune_info = {"pruned": 0, "held": 0, "chars_removed": 0}
     if boilerplate_report is not None:
         prune_info = boilerplate.prune(body, boilerplate_report)
@@ -299,9 +406,11 @@ def parse(html: str, *, page_url: str = "",
     result.pruned = prune_info
 
     ordinal = 0
-    blocks = _find_blocks(body) or [body]
+    result.profile = prof.key
+    blocks = _find_blocks(body, prof.block_classes) or [body]
     for block in blocks:
-        head_node = block.css_first("h2 .title") or block.css_first("h2")
+        head_node = (block.css_first("h2 .title") or block.css_first("h2")
+                     or block.css_first("h3") or block.css_first("h4"))
         heading = _norm(head_node.text() if head_node else "") or result.title
         if head_node is not None:
             head_node.decompose()
@@ -325,6 +434,12 @@ def parse(html: str, *, page_url: str = "",
                                   parent_key=root_key, block_hash=bhash)
             table.decompose()
 
+        # 정의목록 <dl> — 연혁·연락처가 여기 들어간다. 표와 같은 원리로 다룬다.
+        for dl in list(block.css("dl")):
+            ordinal = _emit_deflist(dl, result, page_url, [heading], 1, ordinal,
+                                    parent_key=root_key, block_hash=bhash)
+            dl.decompose()
+
         seen_ul: set[int] = set()
         for ul in block.traverse(include_text=False):
             if ul.tag not in ("ul", "ol") or id(ul) in seen_ul:
@@ -342,9 +457,27 @@ def parse(html: str, *, page_url: str = "",
             ordinal = _walk(ul, result, page_url, [heading], 1, ordinal,
                             parent_key=root_key, quote_key=root_key,
                             block_hash=bhash, seen_ul=seen_ul)
+            ul.decompose()
 
-    if not result.sections:
-        raise ParseError("섹션을 하나도 만들지 못했다 (셀렉터 깨짐 의심)")
+        # 문단 <p> — 인사말·소개글은 목록이 아니라 문단이다.
+        # 표·정의목록·목록을 먼저 떼어냈으므로 여기 남은 것은 진짜 문단이다.
+        for para in list(block.css("p")):
+            t = _norm(para.text())
+            if len(t) < MIN_PARAGRAPH_CHARS:
+                continue
+            result.sections.append(Section(
+                key=_section_key(page_url, [heading, t[:30]], ordinal),
+                page_url=page_url, path=[heading], text=t, raw_text=t,
+                depth=1, ordinal=ordinal, is_leaf=True, kind="paragraph",
+                parent_key=root_key, quote_key=root_key,
+                block_hash=bhash, section_hash=_hash(t)))
+            ordinal += 1
+
+    # ★ 여기서 예외를 던지지 않는다.
+    #   컨테이너는 찾았다 = 셀렉터는 살아 있다. 내용이 없는 것뿐이다.
+    #   (영상만 있는 페이지, JS 로 그리는 페이지가 여기 온다)
+    #   둘을 같은 오류로 묶으면 '파서를 고쳐야 하는 것'과 '고칠 수 없는 것'을
+    #   구분할 수 없다. 커버리지 레지스트리가 empty 로 기록한다.
     return result
 
 

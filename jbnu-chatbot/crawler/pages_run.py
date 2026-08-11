@@ -34,10 +34,11 @@ log = logging.getLogger(__name__)
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 PAGES_YAML = ROOT / "config" / "pages.yaml"
+DEPT_YAML = ROOT / "config" / "pages_dept.yaml"
 UA = "Mozilla/5.0 (compatible; JBNU-StudentCouncil-Bot/1.0)"
 DEFAULT_DELAY = 0.7
-# 1단계 범위 — 본부 한국어 안내. 영문 사이트·게시판 상세는 뺀다.
-TARGET_PREFIXES = ("/web/academic", "/web/unvrslife", "/web/info", "/web/intro")
+# 본부는 /web/ 한국어 전체. 영문 사이트(/en/)·게시판 상세는 뺀다.
+TARGET_PREFIXES = ("/web/",)
 TARGET_HOST = "www.jbnu.ac.kr"
 SKIP_KINDS = ("board_detail", "xhr")
 # 이보다 본문이 짧으면 '내용 없음'으로 본다. 파싱은 됐지만 답할 것이 없는 상태다.
@@ -46,23 +47,48 @@ MIN_CONTENT_CHARS = 40
 EMPTY_BLOCK_CHARS = 20
 
 
-def targets(limit: int | None = None) -> list[dict]:
-    doc = yaml.safe_load(PAGES_YAML.read_text(encoding="utf-8"))
+def targets(limit: int | None = None, *, include_dept: bool = True) -> list[dict]:
+    """본부 /web/ + 학과·기관 subview. 발견 결과에 있는 것만 간다."""
     out, seen = [], set()
+
+    doc = yaml.safe_load(PAGES_YAML.read_text(encoding="utf-8"))
     for p in doc.get("pages", []):
         u = p["url"]
         sp = up.urlsplit(u)
         if sp.hostname != TARGET_HOST or p.get("kind") in SKIP_KINDS:
             continue
-        if not sp.path.startswith(TARGET_PREFIXES):
+        if not sp.path.startswith(TARGET_PREFIXES) or p.get("status") != 200:
             continue
-        if p.get("status") != 200 or sp.path in seen:
+        if u in seen:
             continue
-        seen.add(sp.path)
+        seen.add(u)
         out.append({"url": u, "path": sp.path, "host": sp.hostname,
                     "kind": p.get("kind", "static_page")})
-    out.sort(key=lambda r: r["path"])
-    return out[:limit] if limit else out
+
+    if include_dept and DEPT_YAML.exists():
+        ddoc = yaml.safe_load(DEPT_YAML.read_text(encoding="utf-8"))
+        for p in ddoc.get("pages", []):
+            u = p["url"]
+            if u in seen:
+                continue
+            seen.add(u)
+            out.append({"url": u, "path": up.urlsplit(u).path,
+                        "host": p.get("host") or up.urlsplit(u).hostname,
+                        "kind": "dept_subview"})
+
+    # 호스트를 번갈아 가며 돈다 — 한 사이트를 연달아 때리지 않기 위해서다.
+    # 우리는 손님이고, 손님은 한 집 문만 두드리지 않는다.
+    by_host: dict[str, list[dict]] = {}
+    for r in out:
+        by_host.setdefault(r["host"], []).append(r)
+    for rows in by_host.values():
+        rows.sort(key=lambda r: r["path"])
+    mixed, hosts = [], list(by_host)
+    while any(by_host[h] for h in hosts):
+        for h in hosts:
+            if by_host[h]:
+                mixed.append(by_host[h].pop(0))
+    return mixed[:limit] if limit else mixed
 
 
 def _content_chars(sections) -> int:
@@ -105,23 +131,31 @@ def run(db_path: str, *, limit: int | None = None, delay: float = DEFAULT_DELAY,
                 print(f"  …{i}/{len(rows)} 수집")
             time.sleep(delay)
 
+    # ★ CMS 마다 따로 센다. 섞으면 한쪽 템플릿이 다른 쪽 페이지 수에 희석돼
+    #   임계를 못 넘는다. 본부 204 : 학과 5,560 이면 본부 템플릿은 영영 안 걸린다.
+    by_profile: dict[str, list[dict]] = {}
+    page_profile: dict[str, str] = {}
     for u, h in html.items():
         try:
-            frag_pages.append(SV.page_fragments(h))
+            key, frags = SV.fragments_with_profile(h)
+            page_profile[u] = key
+            by_profile.setdefault(key, []).append(frags)
         except Exception as e:  # noqa: BLE001
             frag_fail[u] = f"{type(e).__name__}: {e}"[:200]
 
-    report = bp.detect(frag_pages)
+    reports = {k: bp.detect(v) for k, v in by_profile.items()}
+    frag_pages = [f for v in by_profile.values() for f in v]
     if verbose:
-        print(f"\n템플릿 조각 {len(report.hashes)}종 "
-              f"(임계 {report.threshold_pages}/{report.total_pages}페이지) "
-              f"{report.skipped_reason}")
-        for d in report.detail[:5]:
-            print(f"    {d['pages']:3} ({d['ratio']:.0%})  {d['sample'][:56]!r}")
-        if report.borderline:
-            print(f"  경계선 {len(report.borderline)}종 — 임계가 흔들릴 조짐이면 여기서 보인다")
-            for d in report.borderline[:3]:
-                print(f"    {d['pages']:3} ({d['ratio']:.0%})  {d['sample'][:56]!r}")
+        for key, report in reports.items():
+            print(f"\n[{key}] 템플릿 조각 {len(report.hashes)}종 "
+                  f"(임계 {report.threshold_pages}/{report.total_pages}페이지) "
+                  f"{report.skipped_reason}")
+            for d in report.detail[:4]:
+                print(f"    {d['pages']:4} ({d['ratio']:.0%})  {d['sample'][:56]!r}")
+            if report.borderline:
+                print(f"  경계선 {len(report.borderline)}종 — 임계가 흔들리면 여기서 먼저 보인다")
+                for d in report.borderline[:2]:
+                    print(f"    {d['pages']:4} ({d['ratio']:.0%})  {d['sample'][:56]!r}")
 
     # ---- 2차: 잘라내고 파싱해서 기록 -----------------------------------
     tally = {s: 0 for s in repo.PARSE_STATUSES}
@@ -142,7 +176,8 @@ def run(db_path: str, *, limit: int | None = None, delay: float = DEFAULT_DELAY,
                 continue
 
             try:
-                res = SV.parse(html[u], page_url=u, boilerplate_report=report)
+                res = SV.parse(html[u], page_url=u,
+                               boilerplate_report=reports.get(page_profile.get(u)))
             except Exception as e:  # noqa: BLE001
                 repo.upsert_page(conn, parse_status="parse_error", http_status=200,
                                  error_message=f"{type(e).__name__}: {e}"[:200],
