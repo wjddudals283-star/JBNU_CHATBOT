@@ -550,7 +550,15 @@ def render_section(result, *, utterance: str = "") -> dict:
 
     hit = result.top
     quote, clipped = _quote_block(hit)
-    lines = [f"[{hit.quote_path or hit.path}]", "", quote]
+    lines = [f"[{hit.quote_path or hit.path}]"]
+    # ★ 다른 이름으로 찾았으면 그 사실을 밝힌다.
+    #   '졸업요건' 을 물었는데 '졸업기준' 문서를 찾았을 수 있다.
+    #   같은 것일 수도, 가까운 것일 수도 있다 — 학생이 판단할 수 있게 알려준다.
+    #   '경로를 표시한다' 는 원칙의 연장이다.
+    via = getattr(result, "via_synonym", "")
+    if via:
+        lines.append(f"('{via}' 라는 이름으로 올라와 있어요)")
+    lines += ["", quote]
     if clipped:
         # 자른 사실을 숨기지 않는다. 잘린 조건은 없는 조건처럼 읽힌다.
         lines += ["", "…(뒷부분이 있어요. 아래 링크에서 전문을 확인해 주세요)"]

@@ -1134,6 +1134,32 @@ def search_sections(conn: sqlite3.Connection, tokens: Sequence[str], *,
     return [dict(r) for r in rows]
 
 
+def _by_title(conn: sqlite3.Connection, tokens: Sequence[str], *,
+              host: str | None, limit: int,
+              seen: list[dict] | None = None) -> list[dict]:
+    """문서 **제목**으로 찾는다.
+
+    ★ 색인은 섹션 본문과 경로만 담는다. '자퇴 / 제적' 처럼 제목이 곧 주제인
+      페이지를 그래서 못 집었다. 제목은 그 문서가 무엇인지 가장 짧게 말해주는 자리다.
+    ★ FTS 분기 밖에 둔다. 안에 두면 '전과 신청' 처럼 2글자 낱말만 있는 질의는
+      FTS 를 안 타므로 제목 검색이 통째로 건너뛰어진다 — 실제로 그랬다.
+    """
+    if not tokens:
+        return []
+    clause = " OR ".join(["r.title LIKE ?"] * len(tokens))
+    args: list[Any] = [f"%{t}%" for t in tokens] + [host, host, limit]
+    rows = conn.execute(
+        f"""SELECT s.*, r.host AS host, r.title AS page_title,
+                   r.last_modified AS page_modified, r.parse_status
+              FROM page_section s
+              JOIN page_registry r ON r.page_url = s.page_url
+             WHERE s.is_leaf = 1 AND ({clause})
+               AND (? IS NULL OR r.host = ?)
+             LIMIT ?""", args).fetchall()
+    have = {r["section_key"] for r in (seen or [])}
+    return [dict(r) for r in rows if r["section_key"] not in have]
+
+
 def get_section(conn: sqlite3.Connection, section_key: str) -> dict | None:
     r = conn.execute(
         """SELECT s.*, r.host AS host, r.title AS page_title, r.last_modified AS page_modified

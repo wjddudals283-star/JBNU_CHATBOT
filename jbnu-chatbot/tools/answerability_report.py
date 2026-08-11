@@ -109,6 +109,40 @@ QUESTIONS: list[tuple[str, str, str, str]] = [
 ]
 
 
+def bottleneck(conn, q: str, must: str) -> tuple[str, str]:
+    """놓친 문항의 병목이 **커버리지인지 검색인지** 가른다.
+
+    ★ 왜 갈라야 하나
+      DB 에 있는데 못 찾은 것이면 더 긁어도 나아지지 않는다. 검색을 고쳐야 한다.
+      DB 에 없는 것이면 검색을 아무리 고쳐도 안 나온다. 더 긁어야 한다.
+      둘을 같이 세면 어느 쪽에 힘을 쓸지 알 수 없다.
+    """
+    if not must:
+        return "-", ""
+    # ★ '본문 어딘가에 낱말이 있다' 를 '정답이 있다' 로 세면 안 된다.
+    #   '근로' 가 산업안전교육 문서에 스쳐도 그건 근로장학 안내가 아니다.
+    #   문서의 **제목·경로**에 있어야 그 문서가 그 주제다.
+    row = conn.execute(
+        """SELECT s.path, r.title, r.host FROM page_section s
+             JOIN page_registry r ON r.page_url = s.page_url
+            WHERE r.title LIKE ? OR s.path LIKE ?
+            ORDER BY length(s.path) LIMIT 1""",
+        (f"%{must}%", f"%{must}%")).fetchone()
+    if row:
+        return "검색", f"{row['host']} · {(row['title'] or '')[:20]}"
+    n = conn.execute("SELECT COUNT(*) FROM notice_item WHERE title LIKE ?",
+                     (f"%{must}%",)).fetchone()[0]
+    if n:
+        return "검색", f"공지 제목 {n}건"
+    # 제목엔 없고 본문에만 있으면 '있다고 보기 애매하다' — 따로 센다
+    t = conn.execute(
+        "SELECT COUNT(*) FROM page_section WHERE text LIKE ?",
+        (f"%{must}%",)).fetchone()[0]
+    if t:
+        return "본문만", f"본문 {t}곳에 스침 (제목엔 없음)"
+    return "커버리지", "DB 어디에도 없음"
+
+
 def judge(q: str, expect: str, must: str, r) -> tuple[str, str]:
     """(판정, 사유). 답해야 하는데 안 하면 miss, 하면 안 되는데 하면 wrong."""
     answered = r.outcome is ss.Outcome.FOUND
@@ -165,6 +199,10 @@ def main(argv: list[str] | None = None) -> int:
                           .replace("\n", " ") if top else ""),
                 "ms": round(ms), "defer": getattr(r, "defer_reason", ""),
             })
+            if v != "OK" and expect == A:
+                kind, where = bottleneck(conn, q, must)
+                rows[-1]["bottleneck"] = kind
+                rows[-1]["bottleneck_where"] = where
 
         icon = {"OK": "✅", "MISS": "△", "WRONG": "❌"}
         if not args.quiet:
@@ -209,6 +247,24 @@ def main(argv: list[str] | None = None) -> int:
         # ★ 틀린 것과 놓친 것을 같은 무게로 세지 않는다.
         #   놓치면 학생이 다른 데를 찾는다. 틀리면 잘못된 곳으로 간다.
         print(f"★ 확신하고 틀린 것 {verdicts['WRONG']}건 — 이게 0에 가까워야 배포할 수 있다")
+
+        # ★ 병목 — 더 긁을 것인가, 검색을 고칠 것인가
+        #   DB 에 있는데 못 찾은 것이면 더 긁어도 나아지지 않는다.
+        #   DB 에 없는 것이면 검색을 아무리 고쳐도 안 나온다.
+        miss = [r for r in rows if r["verdict"] != "OK" and r["expect"] == A]
+        if miss:
+            srch = [r for r in miss if r.get("bottleneck") == "검색"]
+            cov = [r for r in miss if r.get("bottleneck") == "커버리지"]
+            print(f"\n{'-'*72}")
+            print(f"병목: 놓친 {len(miss)}건 중 검색 {len(srch)}건 / "
+                  f"커버리지 {len(cov)}건")
+            for r in srch:
+                print(f"  [검색]     {r['q']:22} DB에 있음 — {r['bottleneck_where']}")
+            for r in cov:
+                print(f"  [커버리지] {r['q']:22} {r['bottleneck_where']}")
+            print("\n  → " + ("더 긁는 것보다 **검색을 고치는 것**이 먼저다."
+                              if len(srch) > len(cov)
+                              else "검색보다 **커버리지 확장**이 먼저다."))
 
         if args.json:
             pathlib.Path(args.json).write_text(

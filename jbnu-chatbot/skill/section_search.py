@@ -62,6 +62,11 @@ MIN_SCORE = 1.2
 AMBIGUOUS_RATIO = 0.70
 MAX_CANDIDATES = 5
 PATH_BOOST = 1.6          # 경로(제목)에서 맞으면 본문보다 무겁게 본다
+# ★ 문서 제목을 점수에 넣어 봤다가 **되돌렸다**.
+#   순위는 정확해졌지만(자퇴 1등, 조기졸업 1등) 확신 오답이 0 → 2 로 늘었다.
+#   제목이 맞는다고 그 섹션이 답인 것은 아니다 — 한 페이지의 모든 섹션이
+#   제목 점수를 똑같이 받아서, 그 안에서 엉뚱한 문단이 1등이 됐다.
+#   섹션 단위로 다시 걸러낼 방법을 찾기 전에는 넣지 않는다.
 PATH_ALL_BOOST = 2.2      # 질문의 낱말이 경로에 **전부** 있으면 그게 그 문서다
 # 낱말이 멀리 떨어져 있으면 같은 이야기가 아니다.
 # '휴학' 과 '신청' 이 한 문단 양 끝에 있다고 휴학 신청 안내는 아니다.
@@ -77,6 +82,8 @@ DEPT_SPECIFIC_SITES = 4
 TOPIC_ZONE_CHARS = 140
 # 핵심 낱말의 이 비율 이상 무게를 가진 낱말은 함께 필수로 본다
 CORE_MARGIN = 0.7
+# 동의어로 맞은 것은 원래 낱말로 맞은 것보다 근거가 한 단계 약하다
+SYNONYM_DISCOUNT = 0.85
 # 이 비율 이상의 섹션에 나오는 낱말은 '군더더기' 로 본다.
 # '규정' '방법' '절차' 는 질문을 이루지만 주제를 좁히지 않는다.
 # 목록을 코드에 박지 않고 **실제 출현 수**로 가린다 — 사이트가 바뀌면 값도 바뀐다.
@@ -90,6 +97,7 @@ HQ_BOOST = 2.0
 _CFG = pathlib.Path(__file__).resolve().parents[1] / "config"
 SITES_PATH = _CFG / "sites.yaml"
 ALIASES_PATH = _CFG / "site_aliases.yaml"
+SYNONYMS_PATH = _CFG / "title_synonyms.yaml"
 
 
 @functools.lru_cache(maxsize=1)
@@ -121,6 +129,46 @@ def site_aliases() -> dict[str, str]:
         return out
     except Exception:  # noqa: BLE001
         return {}
+
+
+@functools.lru_cache(maxsize=1)
+def title_synonyms() -> dict[str, frozenset[str]]:
+    """제목 동의어 — 학과마다 같은 것을 다르게 부른다.
+
+    '졸업요건' 을 '졸업기준' 이라 쓰는 학과가 8곳이다. 손으로 적은 목록이 아니라
+    crawler/synonyms.py 가 관측으로 뽑은 것이다 (어휘·상보분포·본문 겹침).
+
+    ★ 이건 **검색 확장**이지 사실 결합이 아니다.
+      후보를 넓힐 뿐이고, 인용은 여전히 원문 그대로다.
+      넓힌 뒤에도 제목·첫머리 검증은 그대로 통과해야 답한다.
+    """
+    try:
+        import yaml
+        doc = yaml.safe_load(SYNONYMS_PATH.read_text(encoding="utf-8")) or {}
+        off = set(doc.get("disabled") or [])
+        out: dict[str, set[str]] = {}
+        for g in doc.get("groups") or []:
+            if g.get("label") in off:
+                continue          # 사람이 끈 묶음은 쓰지 않는다
+            members = [m for m in g.get("members") or [] if m]
+            for m in members:
+                out.setdefault(m, set()).update(members)
+        return {k: frozenset(v) for k, v in out.items()}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def expand_token(token: str) -> frozenset[str]:
+    """이 낱말과 같은 자리를 뜻하는 다른 표현들."""
+    syn = title_synonyms()
+    if token in syn:
+        return syn[token]
+    # 제목이 통째로 안 맞아도, 질문 낱말을 품은 제목이면 그 그룹을 쓴다
+    #   '졸업요건' 질의 ↔ '학번별졸업요건' 제목
+    for key, group in syn.items():
+        if len(token) >= 3 and token in key:
+            return group
+    return frozenset()
 
 
 def match_site(utterance: str) -> tuple[str | None, str]:
@@ -194,6 +242,7 @@ class SearchResult:
     site_host: str | None = None      # 질문이 특정 학과를 가리켰나
     site_name: str = ""
     missing_tokens: list[str] = field(default_factory=list)  # 못 찾은 낱말
+    via_synonym: str = ""     # 다른 이름으로 찾았으면 그 이름 (답에 밝힌다)
     defer_reason: str = ""    # 왜 보류했나 — 진단용. 조용히 접으면 못 고친다
 
     @property
@@ -261,7 +310,8 @@ def is_label(text: str) -> bool:
 
 
 def score_rows(rows: list[dict[str, Any]], tokens: Sequence[str],
-               weights: dict[str, float], *, hq_boost: bool = True) -> list[Hit]:
+               weights: dict[str, float], *, hq_boost: bool = True,
+               expand: dict[str, frozenset[str]] | None = None) -> list[Hit]:
     hits: list[Hit] = []
     for r in rows:
         text = r.get("text") or ""
@@ -270,12 +320,16 @@ def score_rows(rows: list[dict[str, Any]], tokens: Sequence[str],
             continue
         matched, s = [], 0.0
         for t in tokens:
-            in_text = t in text
-            in_path = t in path
+            forms = [t] + sorted((expand or {}).get(t, ()))
+            in_text = any(f in text for f in forms)
+            in_path = any(f in path for f in forms)
             if not (in_text or in_path):
                 continue
             matched.append(t)
-            s += weights.get(t, 0.0) * (PATH_BOOST if in_path else 1.0)
+            # 동의어로 맞은 것은 원래 낱말로 맞은 것보다 조금 가볍게 본다
+            same = (t in text) or (t in path)
+            s += (weights.get(t, 0.0) * (PATH_BOOST if in_path else 1.0)
+                  * (1.0 if same else SYNONYM_DISCOUNT))
         if not matched:
             continue
         # 질문의 여러 낱말이 한 문단에 같이 나오면 그만큼 더 맞는 답이다
@@ -325,12 +379,52 @@ def _dedupe_by_page(hits: list[Hit]) -> list[Hit]:
 
 
 def search(conn, utterance: str, *, repo) -> SearchResult:
+    """★ 동의어는 **대체 가능**이 아니라 **확장 후보**다.
+
+    '졸업요건 ≡ 졸업기준' 은 같은 것이지만 '졸업요건 ≡ 졸업자격인증제' 는
+    가까운 것일 뿐이다. 본문 겹침 점수는 이 둘을 잘 못 가른다.
+    관련어를 동의어처럼 쓰면 '졸업요건' 을 물은 학생에게 다른 제도를 답하게 된다.
+
+    그래서 두 번 돌린다.
+      1차 — 질문 그대로. 여기서 찾으면 그대로 답한다.
+      2차 — 못 찾았을 때만 동의어로 넓힌다. 그리고 **어느 이름에서 나왔는지
+             답에 표시한다**. 그러면 관련어여도 학생이 스스로 판단할 수 있다.
+    """
     if is_personal_lookup(utterance):
         # 우리는 로그인 뒤를 못 본다. 비슷한 규정을 내미는 것은 답이 아니다.
         return SearchResult(Outcome.PERSONAL)
     tokens = tokenize(utterance)
     if not tokens:
         return SearchResult(Outcome.NO_QUERY)
+
+    first = _attempt(conn, utterance, tokens, repo=repo, expand={})
+    if first.outcome is Outcome.FOUND:
+        return first
+
+    expand = {t: (expand_token(t) - {t}) for t in tokens}
+    expand = {t: v for t, v in expand.items() if v}
+    if not expand:
+        return first
+    second = _attempt(conn, utterance, tokens, repo=repo, expand=expand)
+    if second.outcome is not Outcome.FOUND:
+        return first          # 넓혀도 못 찾으면 원래 판정을 그대로 쓴다
+    # 어느 이름으로 올라와 있었는지 밝힌다
+    top = second.top
+    other = ""
+    for t, forms in expand.items():
+        if t in (top.quote_path + top.page_title):
+            continue
+        hit = next((f for f in sorted(forms)
+                    if f in (top.quote_path + " " + top.page_title)), "")
+        if hit:
+            other = hit
+            break
+    second.via_synonym = other
+    return second
+
+
+def _attempt(conn, utterance: str, tokens: list[str], *, repo,
+             expand: dict[str, frozenset[str]]) -> SearchResult:
 
     total = repo.section_total(conn)
     if total == 0:
@@ -362,8 +456,10 @@ def search(conn, utterance: str, *, repo) -> SearchResult:
     top_w = weights.get(core, 0.0)
     required = [t for t in tokens
                 if weights.get(t, 0.0) >= top_w * CORE_MARGIN]
-    rows = repo.search_sections(conn, tokens, host=site_host)
-    hits = score_rows(rows, tokens, weights, hq_boost=site_host is None)
+    lookup = list(tokens) + sorted({a for v in expand.values() for a in v})
+    rows = repo.search_sections(conn, lookup, host=site_host)
+    hits = score_rows(rows, tokens, weights, hq_boost=site_host is None,
+                      expand=expand)
     hits = _dedupe_by_page(hits)
 
     result = SearchResult(Outcome.NOT_FOUND, query_tokens=tokens,
@@ -404,7 +500,11 @@ def search(conn, utterance: str, *, repo) -> SearchResult:
     #     "내 제목에 내 말이 있다" 는 순환 논리가 된다. 부모 경로만 본다.
     topic_zone = (f"{top.quote_path} {top.page_title} "
                   f"{top.quote_text[:TOPIC_ZONE_CHARS]}")
-    off = [t for t in required if t not in topic_zone]
+    # 되돌림: 핵심 낱말 하나만 보게 완화했더니 확신 오답이 0 → 2 로 늘었다.
+    # '절차' 가 제목에 없는 정답을 몇 건 살리는 대가로 틀린 답 두 건이 나갔다.
+    # 놓치면 학생이 다른 데를 찾고, 틀리면 잘못된 곳으로 간다 — 교환이 성립하지 않는다.
+    off = [t for t in required
+           if not any(f in topic_zone for f in [t, *sorted(expand.get(t, ()))])]
     if off:
         result.outcome = Outcome.AMBIGUOUS
         result.defer_reason = (f"'{' '.join(off)}' 가 제목·첫머리에 없음 "

@@ -1,0 +1,179 @@
+note: '제목 동의어 — 관측으로 뽑았다. 손으로 적은 목록이 아니다.
+
+  신호 셋: 어휘 겹침 · 상보 분포(한 사이트에 둘 다 없음) · 본문 겹침.
+
+  이상한 묶음은 disabled 에 label 을 넣으면 쓰지 않는다.'
+generated_at: '2026-08-11T22:34:31.447186+09:00'
+signals:
+  min_sites: 3
+  max_host_overlap: 0.1
+  min_content: 0.25
+disabled:
+- 졸업요건
+groups:
+- label: 공지사항
+  members:
+  - 공지사항
+  - 학부공지
+  sites: 157
+  content: 0.556
+- label: 찾아오시는길
+  members:
+  - 찾아오시는길
+  - 오시는길
+  - 찾아오시는 길
+  - 오시는 길
+  sites: 138
+  content: 0.3
+- label: 연혁
+  members:
+  - 연혁
+  - 학과연혁
+  sites: 118
+  content: 0.4
+- label: 인사말
+  members:
+  - 인사말
+  - 학과장인사말
+  - 소장 인사말
+  sites: 86
+  content: 0.25
+- label: 자료실
+  members:
+  - 자료실
+  - 서식자료실
+  sites: 77
+  content: 1.0
+- label: 교과과정
+  members:
+  - 교과과정
+  - 교육과정
+  sites: 72
+  content: 0.375
+- label: 학과소개
+  members:
+  - 학과소개
+  - 학과 소개
+  sites: 65
+  content: 0.425
+- label: 교수진
+  members:
+  - 교수진
+  - 전임교수
+  sites: 59
+  content: 0.25
+- label: 갤러리
+  members:
+  - 갤러리
+  - 포토갤러리
+  sites: 53
+  content: 1.0
+- label: 졸업요건
+  members:
+  - 졸업요건
+  - 졸업자격인증제
+  - 졸업기준
+  - 졸업자격인증
+  sites: 44
+  content: 0.475
+- label: 학사일정
+  members:
+  - 학사일정
+  - 학과일정
+  - 행사일정
+  sites: 35
+  content: 0.632
+- label: 졸업 후 진로
+  members:
+  - 졸업 후 진로
+  - 졸업후진로
+  sites: 30
+  content: 0.275
+- label: 전공소개
+  members:
+  - 전공소개
+  - 소개
+  sites: 26
+  content: 0.4
+- label: 교수소개
+  members:
+  - 교수소개
+  - 객원교수
+  sites: 23
+  content: 0.5
+- label: 학사안내
+  members:
+  - 학사안내
+  - 장학안내
+  sites: 22
+  content: 0.3
+- label: 운영규정
+  members:
+  - 운영규정
+  - 규정
+  - 규정 및 지침
+  - 연구소 규정
+  sites: 21
+  content: 0.375
+- label: 장학제도
+  members:
+  - 장학제도
+  - 장학
+  - 장학금안내
+  sites: 18
+  content: 0.25
+- label: 교직이수
+  members:
+  - 교직이수
+  - 교직
+  - 교직과정
+  - 교직과목
+  sites: 15
+  content: 0.35
+- label: 학과사무실
+  members:
+  - 학과사무실
+  - 과사무실
+  - 과사무실소개
+  sites: 14
+  content: 0.423
+- label: 연구실소개
+  members:
+  - 연구실소개
+  - 실험실소개
+  sites: 13
+  content: 0.3
+- label: 학사공지
+  members:
+  - 학사공지
+  - 학부공지사항
+  sites: 12
+  content: 0.333
+- label: 휴학
+  members:
+  - 휴학
+  - 휴학 및 복학
+  sites: 8
+  content: 0.35
+- label: 참여신청
+  members:
+  - 참여신청
+  - 온라인신청
+  sites: 7
+  content: 0.45
+- label: 졸업학점
+  members:
+  - 졸업학점
+  - 학번별 졸업학점
+  sites: 7
+  content: 0.325
+- label: 위치 및 연락처
+  members:
+  - 위치 및 연락처
+  - 위치안내
+  sites: 6
+  content: 0.583
+disabled_why:
+  졸업요건: '''졸업요건 ≡ 졸업자격인증제'' 가 잘못 묶였다. 졸업자격인증제는 영어·봉사 인증 제도로 졸업요건과 다른 것이다. 본문이 둘 다
+    졸업·학점 얘기라 겹침 0.47 로 통과했다 — 관측 규칙이 못 가른 사례다. 이 묶음 때문에 ''졸업요건''(학과마다 다르니 되물어야 하는
+    질문)에 본부 문서를 확신해서 답했다. 측정에서 확신 오답 1건으로 잡혔다.'
