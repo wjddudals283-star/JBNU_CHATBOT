@@ -334,3 +334,40 @@ def test_긴_인용은_자르되_잘랐다고_말한다(db):
         # 조용히 자르면 잘린 조건이 없는 조건처럼 읽힌다
         assert "뒷부분이 있어요" in text
         assert len(text) <= 1000
+
+
+# ── 전문 검색 색인 ───────────────────────────────────────────────────────
+
+def test_한글_낱말_안쪽도_찾는다(db):
+    """'교내장학금만' 안의 '장학금' — 조사가 붙어 한 낱말이 되는 언어라 필요하다."""
+    _seed(db, url="/f", body='<div class="com-box-01"><h2>안내</h2><ul>'
+          '<li>교내장학금만 신청할 수 있습니다</li>'
+          '<li>다른 항목</li></ul></div>', title="장학")
+    assert repo.has_fts(db)
+    r = ss.search(db, "장학금 신청", repo=repo)
+    assert r.outcome is ss.Outcome.FOUND
+    assert "교내장학금만" in r.top.text
+
+
+def test_짧은_토큰은_색인이_못_잡아도_답을_놓치지_않는다(db):
+    """trigram 은 3글자 미만을 매칭하지 못한다. 그때는 LIKE 로 떨어져야 한다.
+
+    색인의 한계 때문에 있는 답을 없다고 하면, 그건 색인이 아니라 거짓말이다.
+    """
+    _seed(db, url="/g", body='<div class="com-box-01"><h2>학적</h2><ul>'
+          '<li>휴학 신청은 학기 개시일 전에 하여야 한다</li>'
+          '<li>다른 항목</li></ul></div>', title="학적")
+    r = ss.search(db, "휴학", repo=repo)
+    assert r.outcome in (ss.Outcome.FOUND, ss.Outcome.AMBIGUOUS)
+    assert any("휴학" in h.text for h in r.hits)
+
+
+def test_사라진_섹션은_검색_색인에서도_빠진다(db):
+    """본문에서 지웠는데 색인에 남으면 없는 문장을 인용하게 된다."""
+    _seed(db, url="/h")
+    assert db.execute("SELECT COUNT(*) FROM page_section_fts").fetchone()[0] > 0
+    _seed(db, url="/h", body=TABLE_BLOCK, title="시험성적")
+    left = db.execute(
+        "SELECT COUNT(*) FROM page_section_fts WHERE text LIKE '%1종 장학금%'"
+    ).fetchone()[0]
+    assert left == 0

@@ -490,3 +490,19 @@ CREATE INDEX IF NOT EXISTS idx_section_page  ON page_section(page_url, ordinal);
 CREATE INDEX IF NOT EXISTS idx_section_leaf  ON page_section(is_leaf);
 CREATE INDEX IF NOT EXISTS idx_section_quote ON page_section(quote_key);
 CREATE INDEX IF NOT EXISTS idx_registry_stat ON page_registry(parse_status);
+
+-- 섹션 전문 검색.
+--
+-- ★ trigram 토크나이저를 쓰는 이유
+--   한국어는 조사가 붙어 '교내장학금만' 처럼 한 낱말이 된다.
+--   기본(unicode61) 은 낱말 단위라 '장학금' 으로 못 찾는다. trigram 은 찾는다.
+--
+-- ★ 다만 trigram 은 **3글자 이상**만 매칭한다.
+--   '휴학' '성적' 같은 2글자 질의는 여기서 답이 안 나와 LIKE 로 떨어진다.
+--   그 사실을 숨기지 않고 질의 계층에서 갈라 쓴다.
+CREATE VIRTUAL TABLE IF NOT EXISTS page_section_fts USING fts5(
+  section_key UNINDEXED,
+  text,
+  path,
+  tokenize = 'trigram'
+);

@@ -939,7 +939,14 @@ def replace_sections(conn: sqlite3.Connection, *, page_url: str,
     부분 갱신을 하면 사라진 섹션이 남아 유령 인용이 된다.
     없어진 문장을 인용하는 것은 지어내는 것과 구별되지 않는다.
     """
+    old = [r[0] for r in conn.execute(
+        "SELECT section_key FROM page_section WHERE page_url = ?", (page_url,))]
     conn.execute("DELETE FROM page_section WHERE page_url = ?", (page_url,))
+    fts = has_fts(conn)
+    if fts and old:
+        conn.executemany(
+            "DELETE FROM page_section_fts WHERE section_key = ?",
+            [(k,) for k in old])
     n = 0
     for s in sections:
         conn.execute(
@@ -955,6 +962,10 @@ def replace_sections(conn: sqlite3.Connection, *, page_url: str,
              s.quote_text, 1 if s.is_leaf else 0, s.parent_key, s.quote_key,
              s.applies_to, s.section_hash, observed_at, page_url,
              page_last_modified))
+        if fts and s.is_leaf:
+            conn.execute(
+                "INSERT INTO page_section_fts (section_key, text, path) "
+                "VALUES (?,?,?)", (s.key, s.text, s.path_text))
         n += 1
     return n
 
@@ -1007,6 +1018,33 @@ def page_status(conn: sqlite3.Connection, page_url: str) -> dict | None:
 # 지금은 LIKE 스캔이다. 4천 섹션에서는 충분하고, 14,000페이지(≈60만 섹션)로 가면
 # FTS5 로 바꿔야 한다. 그때 바뀌는 것은 이 함수 안이지 호출부가 아니다.
 
+# trigram 은 3글자 미만을 매칭하지 못한다. 그 밑은 LIKE 로 간다.
+FTS_MIN_CHARS = 3
+
+
+def has_fts(conn: sqlite3.Connection) -> bool:
+    return bool(conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE name = 'page_section_fts'"
+    ).fetchone())
+
+
+def rebuild_fts(conn: sqlite3.Connection) -> int:
+    """검색 색인을 통째로 다시 만든다. 스키마가 뒤늦게 붙은 DB 를 위해서다."""
+    if not has_fts(conn):
+        return 0
+    conn.execute("DELETE FROM page_section_fts")
+    conn.execute(
+        """INSERT INTO page_section_fts (section_key, text, path)
+           SELECT section_key, text, path FROM page_section WHERE is_leaf = 1""")
+    conn.commit()
+    return conn.execute("SELECT COUNT(*) FROM page_section_fts").fetchone()[0]
+
+
+def _fts_phrase(token: str) -> str:
+    """FTS5 질의 문자열. 따옴표를 이스케이프하지 않으면 구문 오류가 난다."""
+    return '"' + token.replace('"', '""') + '"'
+
+
 def section_total(conn: sqlite3.Connection) -> int:
     return conn.execute(
         "SELECT COUNT(*) FROM page_section WHERE is_leaf = 1").fetchone()[0]
@@ -1014,6 +1052,10 @@ def section_total(conn: sqlite3.Connection) -> int:
 
 def token_doc_freq(conn: sqlite3.Connection, token: str) -> int:
     """이 토큰이 몇 개 섹션에 나오나. 흔한 말에 낮은 가중치를 주기 위해 센다."""
+    if len(token) >= FTS_MIN_CHARS and has_fts(conn):
+        return conn.execute(
+            "SELECT COUNT(*) FROM page_section_fts WHERE page_section_fts MATCH ?",
+            (_fts_phrase(token),)).fetchone()[0]
     like = f"%{token}%"
     return conn.execute(
         "SELECT COUNT(*) FROM page_section "
@@ -1029,6 +1071,28 @@ def search_sections(conn: sqlite3.Connection, tokens: Sequence[str], *,
     """
     if not tokens:
         return []
+    long_toks = [t for t in tokens if len(t) >= FTS_MIN_CHARS]
+    short_toks = [t for t in tokens if len(t) < FTS_MIN_CHARS]
+
+    # 3글자 이상이 하나라도 있으면 FTS 로 후보를 좁힌다. 짧은 토큰은
+    # 그 후보 안에서만 LIKE 로 확인하므로 전체 스캔이 사라진다.
+    if long_toks and has_fts(conn):
+        match = " OR ".join(_fts_phrase(t) for t in long_toks)
+        rows = conn.execute(
+            """
+            SELECT s.*, r.title AS page_title, r.last_modified AS page_modified,
+                   r.parse_status
+              FROM page_section_fts f
+              JOIN page_section s ON s.section_key = f.section_key
+              JOIN page_registry r ON r.page_url = s.page_url
+             WHERE page_section_fts MATCH ?
+             LIMIT ?
+            """, (match, limit)).fetchall()
+        out = [dict(r) for r in rows]
+        if out or not short_toks:
+            return out
+        # FTS 가 빈손이면 짧은 토큰만 남은 셈이라 아래로 떨어진다
+
     clause = " OR ".join(["(s.text LIKE ? OR s.path LIKE ?)"] * len(tokens))
     args: list[Any] = []
     for t in tokens:
