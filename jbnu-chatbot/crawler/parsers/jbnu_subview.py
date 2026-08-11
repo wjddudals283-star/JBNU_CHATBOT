@@ -414,6 +414,16 @@ def content_root(html: str, profile: Profile | None = None,
         if boilerplate_report is not None:
             boilerplate.prune(tree.css_first("body") or tree, boilerplate_report)
         body = _densest_node(tree)
+        if body is None and boilerplate_report is not None:
+            # ★ 자르고 나서 아무것도 안 남으면 자르기 전으로 되돌린다.
+            #   목록 페이지들은 서로 비슷해서 본문이 템플릿으로 판정될 수 있다.
+            #   그때 통째로 버리면 '못 읽었다' 가 되지만, 실은 읽을 수 있었다.
+            #   지우는 쪽이 되돌리기 어려우므로 되돌릴 수 있을 때 되돌린다.
+            tree = HTMLParser(html)
+            for sel in GENERIC.drop_selectors:
+                for n in tree.css(sel):
+                    n.decompose()
+            body = _densest_node(tree)
     if body is None:
         raise ParseError(
             "본문 컨테이너를 찾지 못했다 "

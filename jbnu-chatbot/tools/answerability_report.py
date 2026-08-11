@@ -129,11 +129,13 @@ def main(argv: list[str] | None = None) -> int:
             rows.append({
                 "topic": topic, "q": q, "expect": expect, "verdict": v,
                 "why": why, "outcome": r.outcome.value,
-                "site": top.site_name if top else "",
-                "path": (top.quote_path or top.path) if top else "",
-                "quote": ((top.quote_text or top.text)[:120]
+                "site": getattr(top, "site_name", "") if top else "",
+                "path": (getattr(top, "quote_path", "")
+                         or getattr(top, "title", "")) if top else "",
+                "quote": ((getattr(top, "quote_text", "")
+                           or getattr(top, "title", ""))[:120]
                           .replace("\n", " ") if top else ""),
-                "ms": round(ms), "defer": r.defer_reason,
+                "ms": round(ms), "defer": getattr(r, "defer_reason", ""),
             })
 
         icon = {"OK": "✅", "MISS": "△", "WRONG": "❌"}
