@@ -14,6 +14,17 @@
 ★ 답에 출처를 붙인다
   홈페이지 링크가 없으므로 **어디에 물어 확인했는지**를 대신 밝힌다.
   학생이 검증할 수 있어야 한다 — 검증할 수 없는 답은 믿어달라는 요구다.
+
+★ 부재는 관측되지 않는다 (kind: absent)
+  '학점포기 제도가 없다' 는 크롤로 **영원히** 알 수 없다.
+  없는 제도는 페이지가 없고, 4,231페이지 어디에도
+  "학점포기는 없습니다" 라는 문장은 없다. 웹은 있는 것만 말한다.
+  그래서 '제도가 아예 없음' 은 사람만 넣을 수 있다.
+
+  '없다' 의 갈래가 하나 늘었다:
+      못 긁음 / 못 찾음 / 학교가 안 올림 / **제도가 아예 없음**
+  앞의 셋은 우리 사정이고 마지막 하나는 학교의 사실이다.
+  이걸 '모른다' 로 답하면 학생은 있는 줄 알고 계속 찾는다.
 """
 
 from __future__ import annotations
@@ -37,6 +48,8 @@ class ManualAnswer:
     verified_at: str
     valid_to: str
     enabled: bool = False
+    kind: str = "fact"        # fact | absent (제도가 아예 없음)
+    alternative: str = ""     # 없을 때 대신 알려줄 것
 
     @property
     def ready(self) -> bool:
@@ -72,6 +85,8 @@ def _load(path: pathlib.Path) -> list[ManualAnswer]:
             verified_at=str(row.get("verified_at") or ""),
             valid_to=str(row.get("valid_to") or ""),
             enabled=bool(row.get("enabled")),
+            kind=str(row.get("kind") or "fact"),
+            alternative=str(row.get("alternative") or ""),
         ))
     return out
 
@@ -104,7 +119,8 @@ def report(today: str | None = None,
     """/admin/manual 용. 무엇이 살아 있고 무엇이 만료됐는지 그대로 보고한다."""
     today = today or dt.date.today().isoformat()
     rows = entries if entries is not None else load()
-    out = [{"key": e.key, "status": e.status(today), "valid_to": e.valid_to,
+    out = [{"key": e.key, "kind": e.kind, "status": e.status(today),
+            "valid_to": e.valid_to,
             "verified_by": e.verified_by, "verified_at": e.verified_at,
             "source": e.source, "ask": e.ask} for e in rows]
     live = [r for r in out if r["status"] == "사용 중"]
@@ -113,6 +129,8 @@ def report(today: str | None = None,
         "live": len(live),
         "expired": sum(1 for r in out if r["status"] == "만료"),
         "unverified": sum(1 for r in out if r["status"].startswith("미확인")),
+        # 크롤로는 영원히 못 채우는 항목 — 사람만 넣을 수 있다
+        "absent": sum(1 for r in out if r["kind"] == "absent"),
         "entries": out,
         # 만료가 임박한 것을 미리 알린다. 만료된 뒤에 아는 것은 늦다.
         "expiring_soon": [r["key"] for r in live

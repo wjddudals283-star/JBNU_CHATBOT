@@ -642,7 +642,12 @@ def render_manual(entry, *, utterance: str = "") -> dict:
       **어디에 물어 확인했는지**를 대신 적는다.
       검증할 수 없는 답은 믿어달라는 요구다 — 우리는 그걸 하지 않는다.
     """
-    lines = [entry.answer.strip(), ""]
+    lines = [entry.answer.strip()]
+    # ★ 없는 제도를 물었을 때는 대안까지 줘야 답이 끝난다.
+    #   '없어요' 만 하면 학생은 다른 데서 계속 찾는다.
+    if getattr(entry, "alternative", ""):
+        lines += ["", entry.alternative.strip()]
+    lines.append("")
     who = entry.source or "총학생회 확인"
     lines.append(f"📌 총학생회가 {who}한 내용이에요 ({entry.verified_at} 확인)")
     return kakao.response(

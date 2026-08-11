@@ -91,3 +91,31 @@ def test_배포된_설정에는_실명이_없다():
     for e in ma._load(ma.CONFIG_PATH):
         # 아직 아무것도 확인되지 않았어야 한다 (확인 전 배포 금지)
         assert not e.ready or e.verified_by, e.key
+
+
+# ── 부재는 관측되지 않는다 ───────────────────────────────────────────────
+
+def test_제도가_없다는_답은_사람만_넣을_수_있다():
+    """크롤로는 영원히 알 수 없다.
+
+    없는 제도는 페이지가 없고, 4,231페이지 어디에도
+    "학점포기는 없습니다" 라는 문장은 없다. 웹은 있는 것만 말한다.
+    """
+    e = ma.find("학점포기 되나요", today=TODAY)
+    assert e is not None and e.kind == "absent"
+    out = templates.render_manual(e)
+    text = out["template"]["outputs"][0]["simpleText"]["text"]
+    assert "없어요" in text
+
+
+def test_없다고만_하지_않고_대안을_준다():
+    """'없어요' 만 하면 학생은 다른 데서 계속 찾는다."""
+    e = ma.find("학점포기", today=TODAY)
+    text = templates.render_manual(e)["template"]["outputs"][0]["simpleText"]["text"]
+    assert "재수강" in text
+
+
+def test_부재_답변도_만료와_확인자를_요구한다():
+    """제도는 생길 수 있다. 없다는 답도 언젠가 틀린다."""
+    e = _entry(kind="absent", valid_to="2026-08-10")
+    assert ma.find("학점포기", today=TODAY, entries=[e]) is None

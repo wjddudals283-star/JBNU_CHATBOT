@@ -28,7 +28,31 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from skill import manual_answers  # noqa: E402
 from skill import section_search as ss  # noqa: E402
+
+
+class _ManualHit:
+    """총학 확인 답을 검색 결과와 같은 모양으로 감싼다 (측정용)."""
+
+    def __init__(self, e):
+        self.quote_text = f"{e.answer} {e.alternative}".strip()
+        self.text = self.quote_text
+        self.quote_path = e.key
+        self.page_title = e.key
+        self.site_name = "총학 확인"
+        self.title = e.key
+        self.board_name = ""
+
+
+class _ManualResult:
+    def __init__(self, e):
+        self.outcome = ss.Outcome.FOUND
+        self.top = _ManualHit(e)
+        self.hits = [self.top]
+        self.query_tokens = []
+        self.defer_reason = ""
+        self.page_level = False
 from store import repo  # noqa: E402
 
 A, D = "answer", "defer"
@@ -61,7 +85,9 @@ QUESTIONS: list[tuple[str, str, str, str]] = [
     ("수강신청", "성적 이의신청", A, "이의"),
     ("수강신청", "시험 언제", A, "시험"),
     ("수강신청", "수강신청 정정", D, ""),
-    ("수강신청", "학점포기", D, ""),
+    # 제도가 아예 없다 — T4 부정 답변으로 답한다.
+    # 크롤로는 영원히 알 수 없어서 '보류' 로 세고 있었는데, 사실은 정답 가능한 문항이었다.
+    ("수강신청", "학점포기", A, "없어요"),
     # ── 장학·등록 59.5% ──────────────────────────────────────────
     ("장학·등록", "1종 장학금 얼마야", A, "등록금 전액"),
     ("장학·등록", "국가장학금 신청", A, "국가장학금"),
@@ -101,6 +127,7 @@ QUESTIONS: list[tuple[str, str, str, str]] = [
     ("학과", "컴퓨터인공지능학부 교육과정", A, "교과과정"),
     ("학과", "총장 누구야", A, "총장"),
     # ── 답하면 안 되는 것 ────────────────────────────────────────
+    # 기숙사 통금 — 자료가 없다. T4 목록에서는 뺐지만 질문은 들어올 수 있다.
     ("보류", "기숙사 통금", D, ""),
     ("보류", "분실물 찾기", D, ""),
     ("보류", "안녕하세요", D, ""),
@@ -185,8 +212,15 @@ def main(argv: list[str] | None = None) -> int:
         for topic, q, expect, must in QUESTIONS:
             t0 = time.perf_counter()
             # 공지는 제목 검색이 담당한다. 같은 잣대로 잰다.
-            r = (ss.search_notices(conn, q, repo=repo) if topic == "공지"
-                 else ss.search(conn, q, repo=repo))
+            # ★ 총학이 직접 확인한 답이 먼저다 — 서버 라우팅과 같은 순서로 잰다.
+            #   재는 자가 실제 경로와 다르면 측정이 거짓말을 한다.
+            manual = manual_answers.find(q)
+            if manual is not None:
+                r = _ManualResult(manual)
+            elif topic == "공지":
+                r = ss.search_notices(conn, q, repo=repo)
+            else:
+                r = ss.search(conn, q, repo=repo)
             ms = (time.perf_counter() - t0) * 1000
             lat.append(ms)
             v, why = judge(q, expect, must, r)

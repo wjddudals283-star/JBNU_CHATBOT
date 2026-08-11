@@ -1102,7 +1102,7 @@ def search_sections(conn: sqlite3.Connection, tokens: Sequence[str], *,
         match = " OR ".join(_fts_phrase(t) for t in long_toks)
         rows = conn.execute(
             """
-            SELECT s.*, r.host AS host, r.title AS page_title, r.last_modified AS page_modified,
+            SELECT s.*, r.host AS host, r.title AS page_title, r.leaf_count AS leaf_count, r.last_modified AS page_modified,
                    r.parse_status
               FROM page_section_fts f
               JOIN page_section s ON s.section_key = f.section_key
@@ -1124,7 +1124,7 @@ def search_sections(conn: sqlite3.Connection, tokens: Sequence[str], *,
     args += [host, host, limit]
     rows = conn.execute(
         f"""
-        SELECT s.*, r.host AS host, r.title AS page_title, r.last_modified AS page_modified,
+        SELECT s.*, r.host AS host, r.title AS page_title, r.leaf_count AS leaf_count, r.last_modified AS page_modified,
                r.parse_status
           FROM page_section s
           JOIN page_registry r ON r.page_url = s.page_url
@@ -1162,7 +1162,7 @@ def _by_title(conn: sqlite3.Connection, tokens: Sequence[str], *,
 
 def get_section(conn: sqlite3.Connection, section_key: str) -> dict | None:
     r = conn.execute(
-        """SELECT s.*, r.host AS host, r.title AS page_title, r.last_modified AS page_modified
+        """SELECT s.*, r.host AS host, r.title AS page_title, r.leaf_count AS leaf_count, r.last_modified AS page_modified
              FROM page_section s
              JOIN page_registry r ON r.page_url = s.page_url
             WHERE s.section_key = ?""", (section_key,)).fetchone()
