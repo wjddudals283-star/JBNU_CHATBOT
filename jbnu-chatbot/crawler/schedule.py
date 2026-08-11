@@ -123,9 +123,12 @@ def due_sources(sources: dict, now: dt.datetime, *, window_min: int = 30,
     개강 전후 3주는 다시 오지 않는 관측 창이라 하루도 비우면 안 된다.
     (conn 이 없으면 1번만 판단한다 — 순수 함수로 쓸 때를 위한 것)
     """
+    from crawler import jobs as jobs_mod
     out = []
     for key, cfg in sources.items():
-        if cfg.get("parser") not in run_mod.PARSERS:
+        # 원천 하나를 긁는 것(parser)과 여러 페이지를 도는 것(job)을 둘 다 다룬다
+        if (cfg.get("parser") not in run_mod.PARSERS
+                and cfg.get("job") not in jobs_mod.JOBS):
             continue
         targets = _scheduled_today(cfg, now)
         if not targets:
@@ -155,9 +158,12 @@ def source_freshness(conn, sources: dict, now: dt.datetime) -> list[dict]:
       24시간 기준을 그대로 적용하면 매일 경보가 뜬다.
       반대로 임계를 아예 안 두면 **백필이 조용히 멈춘 걸 못 잡는다.**
     """
+    from crawler import jobs as jobs_mod
     out = []
     for key, cfg in sources.items():
-        if cfg.get("parser") not in run_mod.PARSERS:
+        # 원천 하나를 긁는 것(parser)과 여러 페이지를 도는 것(job)을 둘 다 다룬다
+        if (cfg.get("parser") not in run_mod.PARSERS
+                and cfg.get("job") not in jobs_mod.JOBS):
             continue
         row = conn.execute(
             """SELECT MAX(started_at) AS last_ok FROM crawl_run

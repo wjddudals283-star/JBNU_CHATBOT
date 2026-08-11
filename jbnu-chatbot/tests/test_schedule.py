@@ -62,9 +62,12 @@ def test_예정_시각_창_안에서만_실행_대상이_된다():
     due = sched.due_sources(srcs, at_6)
     assert "coop_week_menu" in due and "likehome_week_menu" in due
 
-    # 예정 시각이 없는 시간대 (주기를 늘린 뒤 07시대가 예정에서 빠졌다)
+    # 예정 시각이 없는 시간대. **목록 전체를 비교하지 않는다** —
+    # 원천이 늘 때마다 깨지는 테스트는 규칙이 아니라 눈금자를 지키는 것이다.
     at_13 = dt.datetime(2026, 8, 10, 13, 0, tzinfo=KST)
-    assert sched.due_sources(srcs, at_13) == []
+    due_13 = sched.due_sources(srcs, at_13)
+    assert "coop_week_menu" not in due_13
+    assert "likehome_week_menu" not in due_13
 
     at_11 = dt.datetime(2026, 8, 10, 11, 10, tzinfo=KST)
     assert "jbnu_cafeteria_day" in sched.due_sources(srcs, at_11)
@@ -157,7 +160,10 @@ def test_예정_시각_전에는_따라잡지_않는다(hconn):
     """05시에 켰으면 06:00 예정은 아직 안 지났다. 미리 돌리지 않는다."""
     srcs = sched.load_schedule()
     at_5 = dt.datetime(2026, 8, 10, 5, 0, tzinfo=KST)
-    assert sched.due_sources(srcs, at_5, conn=hconn) == []
+    due_5 = sched.due_sources(srcs, at_5, conn=hconn)
+    # 06:00 예정인 원천은 아직 때가 아니다 (03:10 예정인 작업은 이미 지났다)
+    assert "likehome_week_menu" not in due_5
+    assert "coop_week_menu" not in due_5
 
 
 def test_실패한_날은_따라잡는다(hconn):

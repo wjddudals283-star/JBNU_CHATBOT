@@ -27,6 +27,7 @@ import yaml
 from crawler import boilerplate as bp
 from crawler import fetch as fetch_mod
 from crawler.parsers import jbnu_subview as SV
+from crawler.parsers import notice_list as NL
 from store import repo
 
 KST = dt.timezone(dt.timedelta(hours=9))
@@ -101,6 +102,14 @@ def targets(limit: int | None = None, *, include_dept: bool = True) -> list[dict
             if by_host[h]:
                 mixed.append(by_host[h].pop(0))
     return mixed[:limit] if limit else mixed
+
+
+def _site_names() -> dict[str, str]:
+    p = ROOT / "config" / "sites.yaml"
+    if not p.exists():
+        return {}
+    doc = yaml.safe_load(p.read_text(encoding="utf-8"))
+    return {h: v.get("name", "") for h, v in (doc.get("sites") or {}).items()}
 
 
 def _content_chars(sections) -> int:
@@ -186,6 +195,8 @@ def run(db_path: str, *, limit: int | None = None, delay: float = DEFAULT_DELAY,
     # ---- 2차: 잘라내고 파싱해서 기록 -----------------------------------
     tally = {s: 0 for s in repo.PARSE_STATUSES}
     total_sections = 0
+    notices = boards = 0
+    site_names = _site_names()
     conn = repo.connect(db_path)
     try:
         for r in rows:
@@ -200,6 +211,19 @@ def run(db_path: str, *, limit: int | None = None, delay: float = DEFAULT_DELAY,
                                  http_status=code, error_message=msg, **common)
                 tally["fetch_error"] += 1
                 continue
+
+            # ★ 이미 받아온 원문으로 게시판도 같이 읽는다.
+            #   공지 때문에 6,769페이지를 다시 받는 것은 낭비이고,
+            #   같은 페이지를 하루에 두 번 두드리는 것은 손님의 도리가 아니다.
+            if NL.is_board_page(html[u]):
+                nl = NL.parse(html[u], page_url=u)
+                if nl.items:
+                    notices += repo.replace_notices(
+                        conn, board_url=u, items=nl.items, host=r["host"],
+                        board_name=nl.board_name,
+                        site_name=site_names.get(r["host"], ""),
+                        observed_at=stamp)
+                    boards += 1
 
             try:
                 res = SV.parse(html[u], page_url=u,
@@ -232,6 +256,7 @@ def run(db_path: str, *, limit: int | None = None, delay: float = DEFAULT_DELAY,
                 page_last_modified=res.last_modified)
             tally[status] += 1
         conn.commit()
+        repo.mark_boards(conn)
         summary = repo.coverage_summary(conn)
     finally:
         conn.close()
@@ -242,8 +267,10 @@ def run(db_path: str, *, limit: int | None = None, delay: float = DEFAULT_DELAY,
             if n:
                 print(f"  {s:12}{n:>8}")
         print(f"  섹션 {total_sections} · 색인 잎 {summary['indexed_leaves']}")
+        print(f"  게시판 {boards}곳 · 공지 {notices}건 (같은 원문으로 함께 읽음)")
         print(f"  답변 가능 비율 {summary['answerable_ratio']:.1%}")
     return {"tally": tally, "sections": total_sections, "summary": summary,
+            "boards": boards, "notices": notices,
             "boilerplate": report.summary()}
 
 

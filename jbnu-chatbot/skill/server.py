@@ -28,7 +28,7 @@ from typing import Any
 from fastapi import Depends, FastAPI, Request
 
 from skill import (aliases, auth, branch, calendar_search, ingest_api, kakao,
-                   section_search,
+                   manual_answers, section_search,
                    routing, safety, templates)
 from store import repo
 
@@ -246,6 +246,12 @@ def create_app(db_path: pathlib.Path | None = None, *,
         }
         return {**summary, "status_meaning": meaning, "gaps": gaps}
 
+    # ★ 총학이 직접 넣은 답의 상태. 만료·미확인을 여기서 본다.
+    #   만료된 뒤에 아는 것은 늦으므로 30일 전에 미리 알린다.
+    @app.get("/admin/manual", dependencies=[Depends(auth.require_token)])
+    def manual() -> dict:
+        return manual_answers.report()
+
     # ★ 단일 진입점. 오픈빌더에 스킬을 **하나만** 등록하면 되고,
     #   블록을 추가할 때 스킬 재등록·토큰 재입력이 필요 없다.
     @app.post("/skill", dependencies=[Depends(auth.require_token)])
@@ -303,6 +309,15 @@ def handle(db_path: pathlib.Path, block_name: str | None, payload: dict,
         return _handle_meal(db_path, params, detail, utterance, now=now)
     if handler == "deadline.upcoming":
         return _handle_upcoming(db_path, params, detail, utterance, now=now)
+    # ★ 총학이 직접 확인한 답이 먼저다.
+    #   홈페이지에 없는 것을 사람이 확인해 넣은 것이므로 크롤보다 근거가 세다.
+    #   확인 안 됐거나 만료된 항목은 여기서 걸러져 검색으로 넘어간다.
+    manual = manual_answers.find(utterance)
+    if manual is not None:
+        log.info("[skill] manual key=%s verified_at=%s", manual.key,
+                 manual.verified_at)
+        return templates.render_manual(manual, utterance=utterance)
+
     if handler == "info.search":
         return _handle_section(db_path, utterance)
     if handler == "notice.search":

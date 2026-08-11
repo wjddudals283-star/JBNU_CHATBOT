@@ -44,15 +44,29 @@ def _site_names() -> dict[str, str]:
         return {}
 
 
-def candidates(conn) -> list[str]:
-    """게시판일 수 있는 페이지. 본문이 비었던 곳이 1순위다.
+def candidates(conn, *, known_only: bool = True) -> list[str]:
+    """돌아볼 페이지.
+
+    ★ 이미 게시판으로 확인된 곳만 도는 것이 기본이다.
+      전수 훑기는 안내 페이지 수집이 원문을 받을 때 함께 한다 —
+      공지 때문에 같은 페이지를 하루에 두 번 두드릴 이유가 없다.
+      새 게시판은 그 전수 수집에서 발견된다.
 
     호스트를 번갈아 돌린다 — 한 사이트만 연달아 두드리지 않는다.
     """
-    rows = conn.execute(
-        """SELECT page_url, host FROM page_registry
-            WHERE parse_status IN ('empty', 'ok')
-            ORDER BY page_url""").fetchall()
+    where = ("WHERE board_items > 0" if known_only
+             else "WHERE parse_status IN ('empty', 'ok')")
+    try:
+        rows = conn.execute(
+            f"SELECT page_url, host FROM page_registry {where} "
+            "ORDER BY page_url").fetchall()
+    except Exception:  # noqa: BLE001  — board_items 칸이 아직 없는 DB
+        rows = conn.execute(
+            """SELECT page_url, host FROM page_registry
+                WHERE parse_status IN ('empty', 'ok')
+                ORDER BY page_url""").fetchall()
+    if known_only and not rows:
+        return candidates(conn, known_only=False)
     by_host: dict[str, list[str]] = {}
     for r in rows:
         by_host.setdefault(r["host"], []).append(r["page_url"])
@@ -65,14 +79,15 @@ def candidates(conn) -> list[str]:
 
 
 def run(db_path: str, *, limit: int | None = None, delay: float = DEFAULT_DELAY,
-        now: dt.datetime | None = None, verbose: bool = True) -> dict:
+        now: dt.datetime | None = None, verbose: bool = True,
+        known_only: bool = True) -> dict:
     now = now or dt.datetime.now(KST)
     stamp = now.isoformat()
     names = _site_names()
 
     conn = repo.connect(db_path)
     try:
-        urls = candidates(conn)
+        urls = candidates(conn, known_only=known_only)
     finally:
         conn.close()
     if limit:
@@ -127,9 +142,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--db", default="data/jbnu.db")
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--delay", type=float, default=DEFAULT_DELAY)
+    ap.add_argument("--all", action="store_true",
+                    help="아는 게시판만이 아니라 전수로 훑는다 (보통은 불필요)")
     args = ap.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(message)s")
-    run(args.db, limit=args.limit, delay=args.delay)
+    run(args.db, limit=args.limit, delay=args.delay, known_only=not args.all)
     return 0
 
 

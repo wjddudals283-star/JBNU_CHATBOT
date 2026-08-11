@@ -154,7 +154,11 @@ def test_한_소스가_죽어도_나머지는_돈다(isolated_db, monkeypatch, c
     lp = loop_mod.SchedulerLoop()
     with caplog.at_level("INFO", logger="jbnu.scheduler"):
         got = lp.tick(dt.datetime(2026, 8, 10, 9, 0, tzinfo=KST))
-    assert len(calls) == len(got), "한 소스가 죽어도 나머지를 건너뛰면 안 된다"
+    # 무거운 작업(job)은 RUN_SCHEDULER 가 없으면 건너뛴다 — 그건 정상이다.
+    # 여기서 보는 것은 '원천 하나가 죽어도 나머지를 계속 돈다' 뿐이다.
+    srcs = sched.load_schedule()
+    parser_targets = [k for k in got if srcs.get(k, {}).get("job") is None]
+    assert len(calls) == len(parser_targets), "한 소스가 죽어도 나머지를 건너뛰면 안 된다"
     assert "[scheduler] FAIL source=coop_week_menu" in caplog.text
 
 
@@ -216,3 +220,23 @@ def test_스케줄러_상태는_인증_뒤에서_보고된다(tmp_path, monkeypa
                           headers={auth.HEADER_NAME: token}).json()
     assert body["ok"] is True
     assert body["scheduler"] is not None and "ticks" in body["scheduler"]
+
+
+def test_무거운_작업은_환경변수_없이는_돌지_않는다(isolated_db, monkeypatch, caplog):
+    """수천 페이지를 도는 작업이 플래그에 묶이면 테스트가 실사이트를 두드린다.
+
+    실제로 그렇게 멈췄다 — 스모크에서 이미 겪은 것과 같은 결함이다.
+    건너뛴 사실은 반드시 로그에 남긴다. 침묵이 가장 위험하다.
+    """
+    monkeypatch.delenv("RUN_SCHEDULER", raising=False)
+    monkeypatch.setattr(run_mod, "main", lambda argv: 0)
+    ran = []
+    from crawler import jobs as jobs_mod
+    monkeypatch.setitem(jobs_mod.JOBS, "pages",
+                        lambda db, cfg, now: ran.append("pages"))
+
+    lp = loop_mod.SchedulerLoop()
+    with caplog.at_level("INFO", logger="jbnu.scheduler"):
+        lp.tick(dt.datetime(2026, 8, 10, 9, 0, tzinfo=KST))
+    assert ran == [], "환경변수 없이 수천 페이지를 두드리면 안 된다"
+    assert "SKIP job=" in caplog.text

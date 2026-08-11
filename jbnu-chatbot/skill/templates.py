@@ -606,3 +606,18 @@ def render_notices(result, *, utterance: str = "") -> dict:
     return kakao.response(
         [card, kakao.simple_text("제목만 보고 찾은 거라 자세한 내용은 눌러서 확인해 주세요.")],
         [kakao.quick_reply("처음으로")])
+
+
+def render_manual(entry, *, utterance: str = "") -> dict:
+    """총학이 직접 확인한 답 (T4).
+
+    ★ 출처를 반드시 밝힌다. 홈페이지 링크가 없으므로
+      **어디에 물어 확인했는지**를 대신 적는다.
+      검증할 수 없는 답은 믿어달라는 요구다 — 우리는 그걸 하지 않는다.
+    """
+    lines = [entry.answer.strip(), ""]
+    who = entry.source or "총학생회 확인"
+    lines.append(f"📌 총학생회가 {who}한 내용이에요 ({entry.verified_at} 확인)")
+    return kakao.response(
+        [kakao.simple_text("\n".join(lines))],
+        [kakao.quick_reply("처음으로")])

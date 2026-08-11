@@ -32,6 +32,15 @@ from crawler import schedule as sched
 from store import repo
 
 KST = dt.timezone(dt.timedelta(hours=9))
+
+
+def heavy_jobs_enabled() -> bool:
+    """수천 페이지를 도는 작업을 실제로 돌릴 것인가.
+
+    프로덕션(RUN_SCHEDULER=1)에서만 켠다. 테스트·로컬에서 실수로 켜지면
+    학교 서버를 수천 번 두드리게 된다 — 우리는 손님이다.
+    """
+    return os.environ.get("RUN_SCHEDULER", "").strip() in ("1", "true", "yes")
 DEFAULT_INTERVAL_SEC = 15 * 60
 
 log = logging.getLogger("jbnu.scheduler")
@@ -92,8 +101,24 @@ class SchedulerLoop:
                  self.ticks, now.strftime("%Y-%m-%d %H:%M"), targets or "none")
 
         for key in targets:
+            cfg = sources.get(key, {})
             log.info("[scheduler] RUN source=%s", key)
             try:
+                job = cfg.get("job")
+                if job and not heavy_jobs_enabled():
+                    # ★ 수천 페이지를 도는 작업은 **환경변수**를 따른다.
+                    #   플래그에 묶으면 테스트가 SchedulerLoop 를 만드는 순간
+                    #   실사이트를 7,000번 두드린다 — 실제로 그렇게 멈췄다.
+                    #   스모크에서 이미 겪은 것과 같은 결함이다.
+                    #   건너뛴 사실은 반드시 남긴다. 침묵이 가장 위험하다.
+                    log.info("[scheduler] SKIP job=%s (RUN_SCHEDULER 미설정)", job)
+                    continue
+                if job:
+                    from crawler import jobs as jobs_mod
+                    out = jobs_mod.JOBS[job](str(run_mod.DB_PATH), cfg, now)
+                    log.info("[scheduler] JOB %s done %s", job, out)
+                    self.runs += 1
+                    continue
                 run_mod.main(["--source", key])
                 self.runs += 1
                 log.info("[scheduler] DONE source=%s", key)

@@ -37,6 +37,10 @@ MAX_STALENESS_HOURS: dict[str, float] = {
     # 학사일정은 자주 안 바뀌지만, 크롤이 멈춘 걸 숨기면 안 된다.
     "academic_calendar": 30 * 24,
     "procedure": 180 * 24,
+    # 안내 문서는 학기 중에도 주 단위로 바뀐다. 하루 1회 수집으로 충분하다.
+    "page_section": 7 * 24,
+    # 공지는 그날그날 올라온다. 오래된 목록은 '없는 것'처럼 보인다.
+    "notice_item": 24,
     "contact": 180 * 24,
     "place": 180 * 24,
 }
