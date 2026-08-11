@@ -102,10 +102,24 @@ def _empty_blocks(sections) -> int:
 
 
 def run(db_path: str, *, limit: int | None = None, delay: float = DEFAULT_DELAY,
-        now: dt.datetime | None = None, verbose: bool = True) -> dict:
+        now: dt.datetime | None = None, verbose: bool = True,
+        only_status: tuple[str, ...] | None = None) -> dict:
+    """only_status 를 주면 그 상태인 페이지만 다시 돈다.
+
+    파서를 고쳤다고 5,764곳을 또 두드리지 않는다. 우리는 손님이다.
+    """
     now = now or dt.datetime.now(KST)
     stamp = now.isoformat()
     rows = targets(limit)
+    if only_status:
+        c0 = repo.connect(db_path)
+        try:
+            keep = {r[0] for r in c0.execute(
+                "SELECT page_url FROM page_registry WHERE parse_status IN "
+                f"({','.join('?' * len(only_status))})", tuple(only_status))}
+        finally:
+            c0.close()
+        rows = [r for r in rows if r["url"] in keep]
     if verbose:
         print(f"대상 {len(rows)}페이지 · 간격 {delay}s · 동시성 1")
 

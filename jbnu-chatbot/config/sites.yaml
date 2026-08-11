@@ -1,0 +1,705 @@
+count: 234
+note: 호스트 → 사이트(학과·기관) 이름. source_inventory.json 의 첫 화면 제목에서 왔다.
+sites:
+  account.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 회계학과
+  adti.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 첨단방위산업학과
+  aerospace.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 항공우주공학과
+  agct.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 4단계 BK21 동식물 위해요소 제어 그린바이오 인재양성 사업단
+  agri.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 농업생명과학대학
+  agribio.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 통합홈페이지 관리시스템
+  agrieng.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 지역건설공학과
+  agrifm.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 식품유통학
+  agrifoodtech.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 푸드테크학과
+  aijob.jbnu.ac.kr:
+    cms: unknown
+    name: AI JOB@JBNU
+  ailab.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 영상정보신기술연구센터
+  alumni.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 총동창회
+  animalbio.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 동물생명공학과
+  animalsci.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 동물자원과학과
+  antrc.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 수송기계신기술연구센터
+  arc.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 조류질병연구소
+  archi.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 건축공학과
+  archinst.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 기록관리학 교육원
+  archives.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 기록관리학과
+  arts.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 예술대학
+  atom.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 양자시스템공학과
+  barr.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 생명자원융합학과
+  bi.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 창업보육센터
+  bime.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 생물산업기계공학과
+  bio-tech.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 생명공학부
+  bio.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 생명과학과
+  bioedu.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 과학교육학부 생물교육전공
+  bioenv.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 생물환경화학과
+  biomedical.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 바이오메디컬공학부
+  biosafety.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 생체안전성연구소
+  biotech.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 환경생명자원대학
+  bse.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 이차전지공학과
+  business.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 경영학과
+  career.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 취업진로지원과
+  cbe.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 경상대학
+  cec.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 평생교육원
+  changup.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 창업지원단 인트로
+  che.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 화학공학부
+  chemedu.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 과학교육학부 화학교육전공
+  chemipia.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 화학과
+  child.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 아동학과
+  chinese.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 중어중문학과
+  cholla.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 전라문화연구소
+  civil.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 토목공학과
+  clean.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 청렴행정센터
+  cleanenergy.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 청정에너지연구센터
+  coe.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 사범대학
+  cpp.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 공공인재학부(공공학 전공)
+  cprc.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 고온플라즈마응용연구센터
+  crop.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 작물생명과학과
+  csai.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 컴퓨터인공지능학부
+  cte.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: IT융합기전공학
+  cultalab.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 문화융복합아카이빙연구소
+  culture.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 고고문화인류학과
+  curf.jbnu.ac.kr:
+    cms: unknown
+    name: 공동실험실습관 - 링크포털
+  dent.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 치과대학
+  deutsch.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 독일학과
+  dl.jbnu.ac.kr:
+    cms: unknown
+    name: 도서관
+  dogilyeonguso.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 독일연구소
+  dpa.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 행정학과
+  earthedu.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 과학교육학부 지구과학교육전공
+  eco.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 생태조경디자인학과
+  econo.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 경제학부
+  edulab.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 교과교육연구소
+  ee.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 전기공학과
+  eei.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 전자공학부
+  ees.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 지구환경과학과
+  elite.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 인재등용관
+  emc.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 친환경기계부품설계연구센터
+  eng.jbnu.ac.kr:
+    cms: unknown
+    name: 공과대학
+  english.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 영어영문학과
+  englishedu.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 영어교육과
+  envi.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 환경공학과
+  epe.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 기자재관리
+  eprint.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 유연인쇄전자전문대학원
+  ethedu.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 윤리교육과
+  faculty.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 교수회
+  fashion.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 의류학과
+  fees.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 등록금
+  fieldwork.jbnu.ac.kr:
+    cms: unknown
+    name: 현장실습지원센터
+  foodtech.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 식품공학과
+  fore.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 산림환경과학과
+  forestec.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 숲속어린이집
+  france.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 프랑스∙아프리카학과
+  frme.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 농업경제학
+  fshn.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 식품영양학과
+  fund.jbnu.ac.kr:
+    cms: unknown
+    name: 발전지원재단
+  fusion.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 융합과학연구소 (Institution of Fusion Science)
+  ganjae.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 간재학연구소
+  geoedu.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 지리교육과
+  germanedu.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 독어교육과
+  glamp.jbnu.ac.kr:
+    cms: unknown
+    name: G-램프사업단
+  glocal.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 글로컬대학사업
+  gochang.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 전북대 고창캠퍼스
+  gong.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 공무원노동조합
+  gpq.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 식물방역대학원
+  graduate.jbnu.ac.kr:
+    cms: unknown
+    name: 대학원
+  gsba.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 경영대학원
+  gse.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 환경대학원
+  gsedu.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 교육대학원
+  gsit.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 산업기술대학원
+  gspa.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 공공정책대학원
+  gyojik.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 교원양성지원센터
+  hanyak.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 한약자원학과
+  happycenter.jbnu.ac.kr:
+    cms: unknown
+    name: 행복드림센터
+  he.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 생활과학대학
+  health.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 보건진료소
+  hemorheo.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 혈유변학연구소
+  history.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 사학과
+  historyedu.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 역사교육과
+  hort.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 원예학과
+  housing.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 주거환경학과
+  hrc.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 인권센터
+  human.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 인문대학
+  humins.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 인문학연구소
+  iast.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 농업과학기술연구소
+  icee.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 공학교육혁신센터
+  iei.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 교육혁신본부
+  img.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 유전공학연구소
+  ioffice.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 국제협력과
+  ipam.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 순수 및 응용수학연구소
+  ipit.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 광전자정보기술연구소
+  ir.jbnu.ac.kr:
+    cms: unknown
+    name: logoutScript
+  is.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 정보과학대학원
+  isd.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 사회발전연구소
+  ise.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 산업정보시스템공학과
+  isilver.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 고령친화복지기기연구센터
+  itase.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 융합기술공학부 IT응용시스템공학
+  itmat.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 신소재공학부 정보소재공학전공
+  itrc.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: IT융합연구센터
+  its.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 정보혁신처
+  jamc.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 전북동물의료센터
+  japan.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 일본학과
+  jbnudp.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 국립대학육성사업단
+  jbnukistschool.jbnu.ac.kr:
+    cms: unknown
+    name: JBNU-KIST 산학연융합학과
+  jbnupress.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 출판문화원
+  jeongeup.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 첨단과학캠퍼스
+  jiseas.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 동남아연구소
+  jpea.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 일본˙동아시아연구소
+  juic.jbnu.ac.kr:
+    cms: unknown
+    name: JUIC-JBNU Industrial Cooperation
+  jump.jbnu.ac.kr:
+    cms: unknown
+    name: 통합정보시스템
+  korean.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 국어국문학과
+  koredu.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 국어교육과
+  kozri.jbnu.ac.kr:
+    cms: unknown
+    name: 인수공통전염병연구소
+  la.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 조경학
+  laws.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 법무대학원
+  lawschool.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 법학전문대학원
+  lec.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 언어교육부 인트로
+  legal.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 법률지원센터
+  likehome.jbnu.ac.kr:
+    cms: unknown
+    name: 생활관
+  lis.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 문헌정보학과
+  lms.jbnu.ac.kr:
+    cms: unknown
+    name: 사이트에 로그인 | JBNU LXP
+  materials.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 신소재공학부 전자재료공학전공
+  math.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 수학과
+  mathedu.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 수학교육과
+  mdesign.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 기계설계공학부
+  me.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 기계공학과
+  med.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 의과대학
+  media.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 미디어커뮤니케이션학과
+  metal.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 신소재공학부 금속시스템공학전공
+  molb.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 분자생물학과
+  mot.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 융합기술경영학과
+  ms.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 공과대학부속공장
+  mse.jbnu.ac.kr:
+    cms: unknown
+    name: 기계시스템공학부
+  museum.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 박물관
+  nanoconeng.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 나노융복합에너지혁신소재부품인재양성사업단(나노융합공학과)
+  natural.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 자연과학대학
+  nhm.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 자연사박물관
+  nongak.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 농악풍물굿 연구소
+  nrls.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 생명자원과학대학원
+  nursing.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 간호대학
+  nwgc.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 글로컬캠퍼스관리본부
+  org.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 유기소재섬유공학과
+  pcli.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 공공갈등과 지역혁신연구소
+  pedagogy.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 교육학과
+  pension.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 연금관리학과 인트로
+  pharmacy.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 약학대학
+  philos.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 철학과
+  phyedu.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 과학교육학부 물리교육전공
+  physicaledu.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 체육교육과
+  physics.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 물리학과
+  plantmed.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 식물의학과
+  pmrc.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 식물의학연구센터
+  pol.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 정치외교학과
+  polynano.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 고분자나노공학과
+  portal.jbnu.ac.kr:
+    cms: unknown
+    name: Portal basic index
+  professor.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 교수초빙안내
+  psy.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 심리학과
+  pure.jbnu.ac.kr:
+    cms: unknown
+    name: JBNU Researchers Portal - Pure
+  rad.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 방사선안전관리소
+  rcbm.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 생리활성물질연구소
+  recruit.jbnu.ac.kr:
+    cms: unknown
+    name: 채용시스템
+  res.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 자원·에너지공학과
+  research.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 연구처
+  ricecivilization.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 쌀·삶·문명연구원
+  rinpac.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 이화학연구소
+  rise.jbnu.ac.kr:
+    cms: unknown
+    name: RISE사업단
+  rndpetition.jbnu.ac.kr:
+    cms: unknown
+    name: 연구신문고
+  rotc106.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 전북대 학군단
+  safety.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 안전보건관리부
+  sck.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 한국과학문명학연구소
+  scrc.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 과학문화연구센터
+  semi.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 반도체과학기술학과
+  sfarm.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 스마트팜학과
+  sies.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 국제이공학부 School of International Engineeri
+  sisul.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 시설바로바로서비스
+  smartgrid.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 스마트그리드연구센터
+  social.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 사회과학대학
+  socialedu.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 일반사회교육과
+  socio.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 전북대 사회학과
+  soedu.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 교육문제연구소
+  software.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 소프트웨어공학과
+  spainlatinamerica.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 스페인·중남미연구소
+  spanish.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 스페인·중남미학과
+  sports.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 생활스포츠지도사 연수원
+  sportscience.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 스포츠과학과
+  ss.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 과학학과
+  ssac.jbnu.ac.kr:
+    cms: unknown
+    name: 삼성문화회관
+  ssi.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 사회과학연구소
+  startup.jbnu.ac.kr:
+    cms: unknown
+    name: 창업교육센터
+  stat.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 통계학과
+  sugang.jbnu.ac.kr:
+    cms: unknown
+    name: 수강신청시스템
+  tlo.jbnu.ac.kr:
+    cms: unknown
+    name: 기술사업화지원플랫폼
+  top.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 통합홈페이지 관리시스템
+  trade.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 국제무역학과
+  tsis.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 국제학부
+  urban.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 도시공학과
+  vetmed.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 수의과대학
+  welfare.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 사회복지학과
+  wood.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 목재가공지원센터
+  wse.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 목재응용과학과
+  www.jbnu.ac.kr:
+    cms: jbnu_www
+    name: 전북대학교 본부
+  wz3.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 통합홈페이지 관리시스템
+  yb.jbnu.ac.kr:
+    cms: dept_contentbuilder
+    name: 예비군연대

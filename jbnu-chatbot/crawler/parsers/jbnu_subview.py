@@ -419,6 +419,7 @@ def parse(html: str, *, page_url: str = "", boilerplate_report=None,
         if not block_text:
             continue
         root_key = _section_key(page_url, [heading], ordinal)
+        root_key_ordinal = ordinal
         bhash = _hash(block_text)
 
         result.sections.append(Section(
@@ -461,6 +462,7 @@ def parse(html: str, *, page_url: str = "", boilerplate_report=None,
 
         # 문단 <p> — 인사말·소개글은 목록이 아니라 문단이다.
         # 표·정의목록·목록을 먼저 떼어냈으므로 여기 남은 것은 진짜 문단이다.
+        before_paras = ordinal
         for para in list(block.css("p")):
             t = _norm(para.text())
             if len(t) < MIN_PARAGRAPH_CHARS:
@@ -472,6 +474,20 @@ def parse(html: str, *, page_url: str = "", boilerplate_report=None,
                 parent_key=root_key, quote_key=root_key,
                 block_hash=bhash, section_hash=_hash(t)))
             ordinal += 1
+
+        # ★ 목록도 표도 문단도 없는 블록 — 본문이 <div> 안에 통째로 있는 경우다.
+        #   여기서 넘어가면 색인도 인용도 안 되고 '본문 없음' 으로 기록된다.
+        #   실제로 699자짜리 학과 소개가 그렇게 사라졌다.
+        #   블록 전체를 잎 하나로 삼는다 — 요약하지 않고 그대로 둔다.
+        if ordinal == root_key_ordinal + 1 and len(block_text) >= MIN_PARAGRAPH_CHARS:
+            result.sections.append(Section(
+                key=_section_key(page_url, [heading, "본문"], ordinal),
+                page_url=page_url, path=[heading], text=block_text,
+                raw_text=block_text, depth=1, ordinal=ordinal, is_leaf=True,
+                kind="paragraph", parent_key=root_key, quote_key=root_key,
+                block_hash=bhash, section_hash=bhash))
+            ordinal += 1
+        _ = before_paras
 
     # ★ 여기서 예외를 던지지 않는다.
     #   컨테이너는 찾았다 = 셀렉터는 살아 있다. 내용이 없는 것뿐이다.

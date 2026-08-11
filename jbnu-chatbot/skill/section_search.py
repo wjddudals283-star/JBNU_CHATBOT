@@ -22,7 +22,9 @@
 
 from __future__ import annotations
 
+import functools
 import math
+import pathlib
 import re
 from dataclasses import dataclass, field
 from enum import Enum
@@ -52,10 +54,47 @@ MIN_TOKEN_LEN = 2
 MAX_TOKENS = 8
 # 이 점수 아래면 답하지 않는다. 억지로 맞추면 관련 없는 규정을 사실처럼 보여준다.
 MIN_SCORE = 1.2
-# 1등과 이만큼 가까운 후보가 다른 페이지에 또 있으면 '애매하다'
+# 1등과 이만큼 가까우면 경쟁 후보로 본다.
+# ★ 위험한 것은 '섹션을 잘못 고르는 것' 이 아니라 '학과를 잘못 고르는 것' 이다.
+#   같은 사이트 안의 후보들은 어차피 같은 문서군이고 링크로 확인할 수 있다.
+#   다른 학과의 규정을 내밀면 학생이 그 사실을 알 방법이 없다.
+#   그래서 사이트가 갈릴 때만 답을 보류한다.
 AMBIGUOUS_RATIO = 0.85
 MAX_CANDIDATES = 5
 PATH_BOOST = 1.6          # 경로(제목)에서 맞으면 본문보다 무겁게 본다
+# 학과를 안 밝힌 질문에는 본부 문서가 답이다. 학과 페이지 205곳이 표를 갈라
+# 정작 규정 원문이 밀려나는 것을 막는다.
+HQ_HOST = "www.jbnu.ac.kr"
+HQ_BOOST = 2.0
+SITES_PATH = pathlib.Path(__file__).resolve().parents[1] / "config" / "sites.yaml"
+
+
+@functools.lru_cache(maxsize=1)
+def site_names() -> dict[str, str]:
+    """호스트 → 학과·기관 이름. 없으면 빈 사전 (기능이 꺼질 뿐 죽지 않는다)."""
+    try:
+        import yaml
+        doc = yaml.safe_load(SITES_PATH.read_text(encoding="utf-8"))
+        return {h: v["name"] for h, v in (doc.get("sites") or {}).items()
+                if v.get("name")}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def match_site(utterance: str) -> tuple[str | None, str]:
+    """질문에 학과·기관 이름이 들어 있으면 그 사이트로 좁힌다.
+
+    '기계공학과 교수' 는 기계공학과 사이트를 봐야 한다. 이름을 안 쓰면
+    '기계공학' 이라는 글자가 든 아무 페이지나 올라온다 — 실제로 그랬다.
+    가장 **긴** 이름을 고른다. '공학과' 가 '기계공학과' 를 이기면 안 된다.
+    """
+    best_host, best_name = None, ""
+    for host, name in site_names().items():
+        if host == HQ_HOST or len(name) < 3:
+            continue
+        if name in utterance and len(name) > len(best_name):
+            best_host, best_name = host, name
+    return best_host, best_name
 
 
 class Outcome(str, Enum):
@@ -74,6 +113,8 @@ class Hit:
     path: str
     text: str                 # 색인 단위 — 매칭된 잎
     quote_key: str | None
+    host: str = ""
+    site_name: str = ""       # 어느 학과·기관 사이트인가
     quote_text: str = ""      # 인용 단위 — 부모 블록·표 전체
     quote_path: str = ""      # 인용 블록의 경로 — 화면에 보여줄 것
     page_modified: str | None = None
@@ -88,6 +129,9 @@ class SearchResult:
     query_tokens: list[str] = field(default_factory=list)
     hits: list[Hit] = field(default_factory=list)
     searched_sections: int = 0
+    site_host: str | None = None      # 질문이 특정 학과를 가리켰나
+    site_name: str = ""
+    missing_tokens: list[str] = field(default_factory=list)  # 못 찾은 낱말
 
     @property
     def top(self) -> Hit | None:
@@ -142,7 +186,7 @@ def _weights(tokens: Sequence[str], total: int, df: dict[str, int]) -> dict[str,
 
 
 def score_rows(rows: list[dict[str, Any]], tokens: Sequence[str],
-               weights: dict[str, float]) -> list[Hit]:
+               weights: dict[str, float], *, hq_boost: bool = True) -> list[Hit]:
     hits: list[Hit] = []
     for r in rows:
         text = r.get("text") or ""
@@ -159,8 +203,12 @@ def score_rows(rows: list[dict[str, Any]], tokens: Sequence[str],
             continue
         # 질문의 여러 낱말이 한 문단에 같이 나오면 그만큼 더 맞는 답이다
         s *= 1.0 + 0.35 * (len(matched) - 1)
+        host = r.get("host") or ""
+        if hq_boost and host == HQ_HOST:
+            s *= HQ_BOOST
         hits.append(Hit(
-            section_key=r["section_key"], page_url=r["page_url"],
+            section_key=r["section_key"], page_url=r["page_url"], host=host,
+            site_name=site_names().get(host, ""),
             page_title=r.get("page_title") or "", path=path, text=text,
             quote_key=r.get("quote_key"), page_modified=r.get("page_modified"),
             observed_at=r.get("observed_at") or "", score=round(s, 3),
@@ -190,13 +238,16 @@ def search(conn, utterance: str, *, repo) -> SearchResult:
         # 조회할 것이 아예 없다. '없다' 가 아니라 '아직 안 긁었다' 다.
         return SearchResult(Outcome.NO_DATA, query_tokens=tokens)
 
+    site_host, site_label = match_site(utterance)
     df = {t: repo.token_doc_freq(conn, t) for t in tokens}
-    rows = repo.search_sections(conn, tokens)
-    hits = score_rows(rows, tokens, _weights(tokens, total, df))
+    rows = repo.search_sections(conn, tokens, host=site_host)
+    hits = score_rows(rows, tokens, _weights(tokens, total, df),
+                      hq_boost=site_host is None)
     hits = _dedupe_by_page(hits)
 
     result = SearchResult(Outcome.NOT_FOUND, query_tokens=tokens,
-                          searched_sections=total)
+                          searched_sections=total,
+                          site_host=site_host, site_name=site_label)
     if not hits or hits[0].score < MIN_SCORE:
         return result
 
@@ -212,6 +263,16 @@ def search(conn, utterance: str, *, repo) -> SearchResult:
     rivals = [h for h in hits[1:MAX_CANDIDATES]
               if h.score >= top.score * AMBIGUOUS_RATIO]
     result.hits = hits[:MAX_CANDIDATES]
-    # 비슷한 후보가 다른 페이지에 또 있으면 찍지 않는다
-    result.outcome = Outcome.AMBIGUOUS if rivals else Outcome.FOUND
+    result.missing_tokens = [t for t in tokens if t not in top.matched]
+
+    # ★ 긍정 단정에는 높은 근거를 요구한다.
+    #   질문의 낱말 하나가 어디에도 안 맞았는데 확신하면 엉뚱한 문서를 답으로 준다.
+    #   '기숙사 통금' 에서 '통금' 을 놓치고 학술교류 협정문을 내놓은 적이 있다.
+    if result.missing_tokens:
+        result.outcome = Outcome.AMBIGUOUS
+        return result
+
+    # 경쟁 후보가 **다른 사이트**에 있을 때만 보류한다.
+    cross_site = any(h.host != top.host for h in rivals)
+    result.outcome = Outcome.AMBIGUOUS if cross_site else Outcome.FOUND
     return result

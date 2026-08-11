@@ -257,8 +257,9 @@ from skill import section_search as ss          # noqa: E402
 from skill import templates                     # noqa: E402
 
 
-def _seed(db, url="/s", body=LIST_BLOCK, title="교내장학금"):
-    repo.upsert_page(db, page_url=url, host="www.jbnu.ac.kr", path=url,
+def _seed(db, url="/s", body=LIST_BLOCK, title="교내장학금",
+          host="www.jbnu.ac.kr"):
+    repo.upsert_page(db, page_url=url, host=host, path=url,
                      discovered_at="2026-08-11T00:00:00+09:00",
                      parse_status="ok", title=title, last_modified="2026-07-28")
     res = SV.parse(page(body, survey=False, title=title), page_url=url)
@@ -279,7 +280,7 @@ def test_잎으로_찾고_부모를_인용한다(db):
 
 def test_표는_행으로_찾고_표_전체를_인용한다(db):
     _seed(db, url="/t", body=TABLE_BLOCK, title="시험성적")
-    r = ss.search(db, "A+ 평점", repo=repo)
+    r = ss.search(db, "A+ 등급", repo=repo)
     assert r.outcome is ss.Outcome.FOUND
     assert "등급" in r.top.quote_text and "A | 4.0" in r.top.quote_text
 
@@ -305,12 +306,35 @@ def test_자료가_없는_것과_찾아도_없는_것을_가른다(db):
     assert r2.searched_sections > 0
 
 
-def test_비슷한_후보가_여럿이면_찍지_않는다(db):
-    _seed(db, url="/a", title="장학금 안내 A")
-    _seed(db, url="/b", title="장학금 안내 B")
+def test_학과가_갈리면_찍지_않는다(db):
+    """위험한 것은 섹션을 잘못 고르는 게 아니라 **학과를 잘못 고르는 것**이다.
+
+    다른 학과의 규정을 내밀면 학생이 그 사실을 알 방법이 없다.
+    같은 사이트 안이면 링크로 확인할 수 있으니 답한다.
+    """
+    _seed(db, url="/a", title="장학금 안내 A", host="me.jbnu.ac.kr")
+    _seed(db, url="/b", title="장학금 안내 B", host="ee.jbnu.ac.kr")
     r = ss.search(db, "1종 장학금", repo=repo)
     assert r.outcome is ss.Outcome.AMBIGUOUS
-    assert len({h.page_url for h in r.hits}) == 2
+    assert len({h.host for h in r.hits}) == 2
+
+
+def test_같은_사이트_안에서는_답한다(db):
+    _seed(db, url="/a", title="장학금 안내 A", host="me.jbnu.ac.kr")
+    _seed(db, url="/b", title="장학금 안내 B", host="me.jbnu.ac.kr")
+    r = ss.search(db, "1종 장학금", repo=repo)
+    assert r.outcome is ss.Outcome.FOUND
+
+
+def test_질문의_낱말을_못_찾으면_단정하지_않는다(db):
+    """긍정 단정에는 높은 근거를 요구한다.
+
+    '기숙사 통금' 에서 '통금' 을 놓치고 학술교류 협정문을 답으로 준 적이 있다.
+    """
+    _seed(db, url="/a", title="장학금 안내")
+    r = ss.search(db, "장학금 통금시간", repo=repo)
+    assert r.outcome is ss.Outcome.AMBIGUOUS
+    assert "통금시간" in r.missing_tokens
 
 
 def test_답변에_경로와_출처가_들어간다(db):

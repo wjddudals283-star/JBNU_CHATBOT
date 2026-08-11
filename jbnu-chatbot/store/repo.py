@@ -1064,10 +1064,15 @@ def token_doc_freq(conn: sqlite3.Connection, token: str) -> int:
 
 
 def search_sections(conn: sqlite3.Connection, tokens: Sequence[str], *,
-                    limit: int = 300) -> list[dict[str, Any]]:
+                    limit: int = 600, host: str | None = None
+                    ) -> list[dict[str, Any]]:
     """토큰이 하나라도 들어간 색인 섹션을 모은다. 순위는 질의 계층에서 매긴다.
 
-    '저장하는 건 관측, 결합은 질의 계층에서' — 여기서는 고르기만 한다.
+    ★ 자를 때는 **관련도 순으로** 자른다.
+      예전에는 아무 순서로 400개를 자르고 그 안에서 순위를 매겼다.
+      섹션이 6만 개가 되자 정작 본부의 '1종 장학금 : 등록금 전액' 이
+      잘려나가고 학과 복사본만 남았다. 조용한 절단은 커버리지 착시를 만든다.
+      bm25 는 FTS 가 매기는 값이고, 최종 순위는 여전히 질의 계층에서 정한다.
     """
     if not tokens:
         return []
@@ -1080,14 +1085,16 @@ def search_sections(conn: sqlite3.Connection, tokens: Sequence[str], *,
         match = " OR ".join(_fts_phrase(t) for t in long_toks)
         rows = conn.execute(
             """
-            SELECT s.*, r.title AS page_title, r.last_modified AS page_modified,
+            SELECT s.*, r.host AS host, r.title AS page_title, r.last_modified AS page_modified,
                    r.parse_status
               FROM page_section_fts f
               JOIN page_section s ON s.section_key = f.section_key
               JOIN page_registry r ON r.page_url = s.page_url
              WHERE page_section_fts MATCH ?
+               AND (? IS NULL OR r.host = ?)
+             ORDER BY bm25(page_section_fts)
              LIMIT ?
-            """, (match, limit)).fetchall()
+            """, (match, host, host, limit)).fetchall()
         out = [dict(r) for r in rows]
         if out or not short_toks:
             return out
@@ -1097,14 +1104,14 @@ def search_sections(conn: sqlite3.Connection, tokens: Sequence[str], *,
     args: list[Any] = []
     for t in tokens:
         args += [f"%{t}%", f"%{t}%"]
-    args.append(limit)
+    args += [host, host, limit]
     rows = conn.execute(
         f"""
-        SELECT s.*, r.title AS page_title, r.last_modified AS page_modified,
+        SELECT s.*, r.host AS host, r.title AS page_title, r.last_modified AS page_modified,
                r.parse_status
           FROM page_section s
           JOIN page_registry r ON r.page_url = s.page_url
-         WHERE s.is_leaf = 1 AND ({clause})
+         WHERE s.is_leaf = 1 AND ({clause}) AND (? IS NULL OR r.host = ?)
          LIMIT ?
         """, args).fetchall()
     return [dict(r) for r in rows]
@@ -1112,7 +1119,7 @@ def search_sections(conn: sqlite3.Connection, tokens: Sequence[str], *,
 
 def get_section(conn: sqlite3.Connection, section_key: str) -> dict | None:
     r = conn.execute(
-        """SELECT s.*, r.title AS page_title, r.last_modified AS page_modified
+        """SELECT s.*, r.host AS host, r.title AS page_title, r.last_modified AS page_modified
              FROM page_section s
              JOIN page_registry r ON r.page_url = s.page_url
             WHERE s.section_key = ?""", (section_key,)).fetchone()
