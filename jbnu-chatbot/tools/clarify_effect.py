@@ -35,8 +35,15 @@ if str(ROOT) not in sys.path:
 from skill import clarify  # noqa: E402
 from skill import section_search as ss  # noqa: E402
 from store import repo  # noqa: E402
-from tools.answerability_report import (QUESTIONS, SURE, judge,  # noqa: E402
-                                        shorten)
+from tools.answerability_report import (PAGE_Q, QUESTIONS, SURE,  # noqa: E402
+                                        judge, shorten)
+
+# ★ 2턴 성공의 기준
+#   '확신' 만 성공으로 세면 2턴이 뚫렸는지 과소평가한다.
+#   문서를 맞게 짚고 **자족적 발췌**를 같이 주면 학생은 사실상 답을 받는다.
+#       "휴학 페이지에 있어요" + '일반 휴학' 123자
+#   그래서 문서+발췌도 성공으로 센다. 다만 확신과 갈라서 보여준다.
+TURN2_OK = (SURE, PAGE_Q)
 
 # 이 비율을 넘으면 경고 — 차단은 아니다
 NO_ANSWER_WARN = 0.30
@@ -85,18 +92,20 @@ def main(argv: list[str] | None = None) -> int:
 
             # 2턴 — 버튼을 눌렀다고 치고 라벨을 그대로 발화로 보낸다
             best = None
+            best_v = ""
             for label in opts:
                 r2 = ss.search(conn, label, repo=repo)
                 v2, _ = judge(label, expect, m, r2)
-                if v2 == SURE:
-                    best = label
-                    break
+                if v2 in TURN2_OK:
+                    best, best_v = label, v2
+                    if v2 == SURE:
+                        break      # 확신이 나오면 더 볼 것 없다
             if best is None:
                 no_answer.append((q, opts))
             elif off == SURE:
                 regressed.append((q, best))     # 원래 바로 답할 수 있었다
             else:
-                recovered.append((q, off, best))
+                recovered.append((q, off, f"{best} [{best_v}]"))
 
         print("=" * 72)
         print("되묻기 순효과 = 회수 − 후퇴")

@@ -52,6 +52,7 @@ if str(ROOT) not in sys.path:
 
 from skill import manual_answers  # noqa: E402
 from skill import section_search as ss  # noqa: E402
+from skill import selfcontained  # noqa: E402
 
 
 class _ManualHit:
@@ -217,8 +218,16 @@ def bottleneck(conn, q: str, must: str) -> tuple[str, str]:
 
 
 # 판정 칸. 순서가 곧 학생에게 좋은 순서다.
-SURE, PAGE, THIN, MISS, WRONG, DEFER_OK = (
-    "확신", "문서까지", "쓸모없음", "모름", "틀림", "보류OK")
+#
+# ★ '문서까지' 를 다시 쪼갠다 — 안 쪼개면 인용 승격의 효과가 안 보인다
+#   인용 승격은 **표시 단계**라 마진을 안 건드린다. 그러면 page_level 이 그대로라
+#   랭킹 개선 때와 똑같이 '인용문이 좋아졌다' 는 보이는데 칸이 안 움직인다.
+#   그런데 학생 경험은 진짜로 달라진다.
+#       지금    "휴학 페이지에 있어요" + '사유 발생시'      → 직접 찾아야 함
+#       승격 후  "휴학 페이지에 있어요" + '일반 휴학' 123자   → 사실상 답을 받음
+#   판정은 이미 있는 자족성 판정기로 그대로 된다.
+SURE, PAGE_Q, PAGE, THIN, MISS, WRONG, DEFER_OK = (
+    "확신", "문서+발췌", "문서만", "쓸모없음", "모름", "틀림", "보류OK")
 # 정답으로 세는 칸. ★ '문서까지' 와 '쓸모없음' 은 안 센다 —
 #   안전하지만 학생 질문에 답한 것이 아니다. 되묻기가 노리는 칸이 바로 여기다.
 CORRECT = (SURE, DEFER_OK)
@@ -252,7 +261,10 @@ def judge(q: str, expect: str, must: str, r) -> tuple[str, str]:
         # ★ 페이지 단위라고 한 칸에 몰면 또 뭉쳐 세는 것이다.
         #   문서를 맞게 짚었어도 같이 보여주는 인용이 조각이면 학생은 못 쓴다.
         if in_quote:
-            return PAGE, "문서까지만 짚었다"
+            # 발췌가 혼자 뜻이 서면 학생은 사실상 답을 받은 것이다.
+            if selfcontained.is_self_contained(quote):
+                return PAGE_Q, "문서 + 자족적 발췌"
+            return PAGE, "문서만 짚었다 (발췌가 조각)"
         if in_where:
             return THIN, f"문서는 맞는데 인용에 '{must}' 가 없다"
         return WRONG, f"'{must}' 가 결과에 없음"
@@ -339,8 +351,8 @@ def main(argv: list[str] | None = None) -> int:
                 rows[-1]["bottleneck"] = kind
                 rows[-1]["bottleneck_where"] = where
 
-        icon = {SURE: "✅", DEFER_OK: "✅", PAGE: "📄", THIN: "🫥",
-                MISS: "△", WRONG: "❌"}
+        icon = {SURE: "✅", DEFER_OK: "✅", PAGE_Q: "📃", PAGE: "📄",
+                THIN: "🫥", MISS: "△", WRONG: "❌"}
         if not args.quiet:
             cur = None
             for r in rows:
@@ -365,7 +377,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"\n{'='*72}")
         print(f"균등 정확도 {ok}/{n} = {ok/n:.0%}")
         print(f"  ✅ 확신 {verdicts[SURE]} · ✅ 보류 {verdicts[DEFER_OK]}"
-              f"  │  📄 문서까지 {verdicts[PAGE]} · 🫥 쓸모없음 {verdicts[THIN]}"
+              f"  │  📃 문서+발췌 {verdicts[PAGE_Q]} · 📄 문서만 {verdicts[PAGE]}"
+              f" · 🫥 쓸모없음 {verdicts[THIN]}"
               f" · △ 모름 {verdicts[MISS]} · ❌ 틀림 {verdicts[WRONG]}")
         print("  ★ 문서까지·쓸모없음은 안전하지만 정답으로 세지 않는다 — "
               "학생 질문에 답한 게 아니다")
