@@ -238,6 +238,7 @@ def main(argv: list[str] | None = None) -> int:
                 "ms": round(ms), "defer": getattr(r, "defer_reason", ""),
                 "truncated": getattr(r, "candidates_truncated", False),
                 "matched": getattr(r, "candidates_matched", 0),
+                "depth": getattr(r, "answer_depth", 0),
             })
             if v != "OK" and expect == A:
                 kind, where = bottleneck(conn, q, must)
@@ -293,8 +294,17 @@ def main(argv: list[str] | None = None) -> int:
         cut = [r for r in rows if r.get("truncated")]
         if cut:
             print(f"\n후보 절단 {len(cut)}/{n}문항 — 상한이 답을 자르고 있다")
-            for r in sorted(cut, key=lambda x: -x["matched"])[:6]:
-                print(f"  {r['matched']:6} → 600   {r['q']:20} [{r['verdict']}]")
+            # ★ 잘림 여부만으로는 위험을 못 잰다. **정답이 몇 등이었나**가 답을 준다.
+            #   앞쪽에 있었다면 뒤가 잘린 것과 상관이 없다.
+            for r in sorted(cut, key=lambda x: -x["matched"])[:8]:
+                d = r.get("depth") or 0
+                room = f"여유 {600 - d}" if d else "깊이 미측정"
+                print(f"  {r['matched']:6} → 600   {r['q']:18} "
+                      f"정답 {d:4}등 · {room}  [{r['verdict']}]")
+            deep = [r.get("depth") or 0 for r in cut if r.get("depth")]
+            if deep:
+                print(f"  → 정답 최악 {max(deep)}등. 상한 600 은 "
+                      f"{600 // max(deep)}배 여유가 있다 — 지금은 추측이 아니라 계산이다.")
         else:
             print("\n후보 절단 0문항 — 상한이 아직 답을 자르지 않는다")
 

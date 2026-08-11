@@ -78,7 +78,15 @@ SECTION_MARGIN = 1.5
 #   흔한 낱말은 후보를 넓히기만 하고 변별력이 없다.
 PROBE_DF_MAX = 0.02
 # 후보가 잘렸으면 섹션을 찍는 문턱을 높인다. 확신의 근거가 한 조각 빠졌으므로.
+# ★ 다만 **잘림 여부만 보면 안 된다.**
+#   정답이 후보 앞쪽에 있었다면 뒤가 잘린 것과 상관이 없다.
+#   실측(46문항): 잘린 5문항의 정답 순위가 6·13·13·27·33 등이었다.
+#   상한 600 대비 최악 5.5% 지점이다. 그걸 '확신 못 함' 으로 강등하면
+#   가장 많이 묻는 질문일수록 뭉뚱그린 답을 받게 된다 —
+#   안전해 보이지만 가장 아픈 곳에서 성능이 깎인다.
 TRUNCATED_MARGIN_FACTOR = 2.0
+# 정답이 후보의 앞 이 비율 안에 있으면 잘림을 무시한다
+TRUNCATION_SAFE_DEPTH = 0.25
 # ★ 길이 정규화를 넣어 봤다가 **되돌렸다**.
 #   진단은 맞았다 — 섹션 165개짜리 '수강신청(학부/대학원)' 이 복학·전과·휴학
 #   질문에서 전부 1등이었고, 전체 중앙값은 8개다. 커서 이긴 것이다.
@@ -270,6 +278,7 @@ class SearchResult:
     candidates_truncated: bool = False
     candidates_matched: int = 0
     candidates_returned: int = 0
+    answer_depth: int = 0     # 답이 후보 목록에서 몇 번째였나 (잘림의 영향 판단)
     defer_reason: str = ""    # 왜 보류했나 — 진단용. 조용히 접으면 못 고친다
 
     @property
@@ -514,6 +523,8 @@ def _attempt(conn, utterance: str, tokens: list[str], *, repo,
     lookup = probe + sorted({a for t in probe for a in expand.get(t, ())})
     cand: dict = {}
     rows = repo.search_sections(conn, lookup, host=site_host, stats=cand)
+    # 후보 목록에서의 자리 — 잘림이 이 답에 영향을 줬는지 판단하는 근거
+    depth_of = {r["section_key"]: i for i, r in enumerate(rows)}
     scored = score_rows(rows, tokens, weights, hq_boost=site_host is None,
                         expand=expand)
     ranked = rank_pages(scored)
@@ -540,6 +551,8 @@ def _attempt(conn, utterance: str, tokens: list[str], *, repo,
         h.quote_path = (q or {}).get("path") or h.path
 
     top = hits[0]
+    # ★ 계측은 판정과 무관하게 남긴다. 보류한 질문일수록 왜 그런지 알아야 한다.
+    result.answer_depth = depth_of.get(top.section_key, len(rows)) + 1
     rivals = [h for h in hits[1:MAX_CANDIDATES]
               if h.score >= top.score * AMBIGUOUS_RATIO]
     result.hits = hits[:MAX_CANDIDATES]
@@ -613,11 +626,13 @@ def _attempt(conn, utterance: str, tokens: list[str], *, repo,
     if result.outcome is Outcome.FOUND:
         m = margin_of.get(top.page_url, float("inf"))
         result.section_margin = round(m, 2) if m != float("inf") else 0.0
-        need = SECTION_MARGIN * (TRUNCATED_MARGIN_FACTOR
-                                 if result.candidates_truncated else 1.0)
+        # 잘렸어도 정답이 앞쪽에 있었으면 뒤가 잘린 것과 상관이 없다
+        cut_matters = (result.candidates_truncated
+                       and result.answer_depth > len(rows) * TRUNCATION_SAFE_DEPTH)
+        need = SECTION_MARGIN * (TRUNCATED_MARGIN_FACTOR if cut_matters else 1.0)
         if page_only or m < need:
             result.page_level = True
-        if result.candidates_truncated and result.page_level:
+        if cut_matters and result.page_level:
             result.defer_reason = (
                 f"후보가 상한에 닿아 잘렸다 "
                 f"({result.candidates_matched} → {result.candidates_returned}). "
