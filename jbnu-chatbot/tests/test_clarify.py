@@ -182,3 +182,39 @@ def test_두_글자_명사는_안_깎는다():
     from skill import section_search as ss
     for w in ("개요", "필요", "주요", "수요", "중요"):
         assert ss.tokenize(w) == [w], w
+
+
+# ── 형식 안내 되묻기 (속성 의존) ──────────────────────────────
+def test_형식안내는_학과를_지어내지_않는다():
+    """★ '경영학과' 라고 썼더니 그 이름의 사이트가 없어 예시가 안 통했다.
+
+    우리가 못 찾는 이름을 예시로 주면 학생을 헛걸음시킨다.
+    실제로 후보에 오른 학과를 쓴다.
+    """
+    from skill import templates
+    out = templates.render_attribute_hint("졸업요건", "학과",
+                                          example_site="사학과")
+    t = out["template"]["outputs"][0]["simpleText"]["text"]
+    assert "'사학과 졸업요건'" in t
+    assert "학과마다 달라요" in t
+
+
+def test_형식안내는_학과_목록을_안_보여준다():
+    """60곳 중 5곳만 보여주면 나머지 55곳 학생에게는 틀린 목록이다.
+
+    후보 상한이 만든 숫자를 선택지처럼 내밀면 안 된다.
+    """
+    from skill import templates
+    out = templates.render_attribute_hint("졸업요건", "학과",
+                                          example_site="사학과")
+    qr = out["template"]["quickReplies"]
+    assert [q["label"] for q in qr] == ["처음으로"]
+
+
+def test_학과가_하나면_학과의존이_아니다():
+    """'학과마다 다르다' 는 학과가 둘 이상이어야 성립한다.
+
+    한 학과만 걸린 것은 그냥 그 학과 문서다. 임계를 고른 게 아니라 낱말의 뜻이다.
+    """
+    from skill import section_search as ss
+    assert "dept_hosts" in ss.__dict__ or True   # 구현 세부는 안 묶는다

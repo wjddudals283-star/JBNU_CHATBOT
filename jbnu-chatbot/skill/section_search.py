@@ -112,7 +112,14 @@ PROXIMITY_PENALTY = 0.55
 # '기숙사는 본인이 신청' 이 학술교류 협정대학 표 안에 있다고
 # 그 표가 기숙사 안내인 것은 아니다. 표는 제목이 주제를 정한다.
 TABLE_OFFTOPIC_PENALTY = 0.35
-# 학과 사이트가 이만큼 동시에 걸리면 그 주제는 학과마다 다른 것이다
+# ★ 이 상수는 **왜 맞는지 모른 채 맞고 있었다**
+#   재보니 가르는 것은 개수가 아니라 '본부 문서가 후보에 있느냐' 였다.
+#   후보 상한이 5라서 '학과 4곳' 은 사실상 '본부가 하나도 없음' 과 같았다.
+#       본부 없음  졸업요건(본부 페이지 0개) · 동아리(0개) · 일정
+#       본부 있음  휴학 · 복학 · 자퇴 · 수강신청 · 조기졸업 요건 · 국가장학금
+#   본부에 그 주제 문서가 있으면 전교 공통 규정이고, 없으면 학과마다 흩어진 것이다.
+#   임계값을 찾다가 임계값이 필요 없다는 걸 발견했다 — 후보 상한 600 때와 같은 결말이다.
+#   왜 맞는지 모르는 상수는 언제 틀릴지도 모른다. 유무로 바꾼다.
 DEPT_SPECIFIC_SITES = 4
 # 문서의 주제가 드러나는 자리 — 제목과 첫머리
 TOPIC_ZONE_CHARS = 140
@@ -289,6 +296,9 @@ class SearchResult:
     candidates_returned: int = 0
     answer_depth: int = 0     # 답이 후보 목록에서 몇 번째였나 (잘림의 영향 판단)
     defer_reason: str = ""    # 왜 보류했나 — 진단용. 조용히 접으면 못 고친다
+    # 답이 학생 속성에 의존한다 — 지금 관측된 것은 '학과' 하나뿐이다.
+    # 학번·과정유형·학년은 있을 법하지만 관측이 없어서 안 넣는다.
+    needs_attribute: str = ""
 
     @property
     def top(self) -> Hit | None:
@@ -632,7 +642,26 @@ def _attempt(conn, utterance: str, tokens: list[str], *, repo,
     #   '졸업요건' 이 그렇다. 주제 목록을 코드에 박지 않고 관측으로 가린다 —
     #   학과 사이트 여럿이 동시에 걸린다는 사실 자체가 근거다.
     dept_rivals = {h.host for h in rivals if h.host != HQ_HOST}
-    if len(dept_rivals) >= DEPT_SPECIFIC_SITES:
+    # ★ 가르는 것은 개수가 아니라 **본부 문서의 유무**다
+    #   본부가 답을 갖고 있으면 전교 공통이라 학과가 여럿 걸려도 답은 하나다.
+    #   본부에 아예 없으면 그 주제는 학과마다 다른 것이다 — 되물어야 한다.
+    # ★ **상위 후보**만 본다. 여기서 hits 는 점수 매긴 전체 목록이라
+    #   본부 문서가 저 아래 어딘가에 섞여 있다 — 그걸 '본부가 답을 가짐' 으로
+    #   읽으면 축이 무의미해진다. 재던 것과 같은 범위(1등 + 경쟁 후보)로 본다.
+    hq_present = top.host == HQ_HOST or any(h.host == HQ_HOST for h in rivals)
+    # ★ '학과마다 다르다' 는 말은 **학과가 둘 이상** 이어야 성립한다.
+    #   한 학과만 걸린 것은 그냥 그 학과 문서지 학과 의존이 아니다.
+    #   임계를 고른 게 아니라 낱말의 뜻이다.
+    dept_hosts = {h.host for h in [top, *rivals] if h.host != HQ_HOST}
+    # ★ 질문이 이미 학과를 말했으면 되묻지 않는다.
+    #   '기계공학과 교수' 에 "학과를 붙여 물어보세요" 는 두 번 일하게 하는 것이다.
+    #   버튼 되묻기의 already_narrowed 와 같은 규칙이다.
+    if len(dept_hosts) >= 2 and not hq_present and site_host is None:
+        cross_site = True
+        result.needs_attribute = "학과"
+        result.defer_reason = (f"본부에 그 주제 문서가 없고 학과 "
+                               f"{len(dept_rivals)}곳이 저마다 답을 가짐")
+    elif len(dept_rivals) >= DEPT_SPECIFIC_SITES:
         cross_site = True
         result.defer_reason = f"학과 {len(dept_rivals)}곳이 저마다 답을 가짐"
     elif cross_site:

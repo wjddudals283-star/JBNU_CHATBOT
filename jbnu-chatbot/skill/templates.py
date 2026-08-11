@@ -483,6 +483,34 @@ def _source_line(hit) -> str:
     return f"📄 {where}" + (f" ({when} 기준)" if when else "")
 
 
+def render_attribute_hint(subject: str, attribute: str, *,
+                          example_site: str = "") -> dict:
+    """형식 안내 되묻기 — 답이 학생 속성에 달려 있을 때.
+
+    ★ 버튼 되묻기와 구조가 다르다
+        휴학     같은 페이지 형제 5개        → 버튼으로 끝난다
+        졸업요건  학과 60곳+ 이 저마다 다르다  → 버튼 10개로 안 된다
+      버튼이 없어도 되묻기다. 그리고 상태를 안 만든다 —
+      학생이 전체 질문을 다시 치므로 지금 경로가 그대로 처리한다.
+
+    ★ 다단계를 따로 설계할 필요가 없다
+      '경영학과 졸업요건' → 학과 페이지 → 그 안에서 전공·복수전공이 형제면
+      버튼 되묻기가 이어받는다. 형식 안내(속성) → 버튼(문서 갈래)로 저절로 이어진다.
+
+    ★ 여기서 학과 목록을 보여주지 않는다
+      60곳 중 5곳만 보여주면 나머지 55곳 학생에게는 틀린 목록이다.
+      후보 상한이 만든 숫자를 선택지처럼 내밀면 안 된다.
+    """
+    # ★ 예시는 **실제로 후보에 오른 학과**를 쓴다. 지어내면 그 이름으로
+    #   물었을 때 우리가 못 찾는다 — 학생을 헛걸음시키는 안내가 된다.
+    ex = example_site or "간호대학"
+    text = (f"'{subject}'{J(subject, '은/는')} {attribute}마다 달라요.\n\n"
+            f"'{ex} {subject}'처럼 {attribute}를 붙여서 물어봐 주세요.\n"
+            f"그러면 그 {attribute}의 안내를 그대로 보여드릴게요.")
+    return kakao.response([kakao.simple_text(text)],
+                          [kakao.quick_reply("처음으로")])
+
+
 def render_clarify(subject: str, options: list[str], *, where: str,
                    page_url: str = "") -> dict:
     """되묻기 — 문서가 갈라 놓은 대로 물어본다.

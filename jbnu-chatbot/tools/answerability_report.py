@@ -245,8 +245,13 @@ def _would_clarify(conn, q: str, r) -> bool:
 #       지금    "휴학 페이지에 있어요" + '사유 발생시'      → 직접 찾아야 함
 #       승격 후  "휴학 페이지에 있어요" + '일반 휴학' 123자   → 사실상 답을 받음
 #   판정은 이미 있는 자족성 판정기로 그대로 된다.
-SURE, PAGE_Q, PAGE, THIN, MISS, WRONG, DEFER_OK = (
-    "확신", "문서+발췌", "문서만", "쓸모없음", "모름", "틀림", "보류OK")
+#
+# ★ '형식안내' 를 따로 센다 — 모름과 다르다
+#   "졸업요건은 학과마다 달라요. '사학과 졸업요건'처럼 물어봐 주세요" 는
+#   못 찾았다는 말이 아니라 **다음 수를 알려준 것**이다.
+#   모름과 같이 세면 형식 안내를 붙여도 숫자가 안 움직인다.
+SURE, PAGE_Q, PAGE, THIN, ATTR, MISS, WRONG, DEFER_OK = (
+    "확신", "문서+발췌", "문서만", "쓸모없음", "형식안내", "모름", "틀림", "보류OK")
 # 정답으로 세는 칸. ★ '문서까지' 와 '쓸모없음' 은 안 센다 —
 #   안전하지만 학생 질문에 답한 것이 아니다. 되묻기가 노리는 칸이 바로 여기다.
 CORRECT = (SURE, DEFER_OK)
@@ -262,6 +267,8 @@ def judge(q: str, expect: str, must: str, r) -> tuple[str, str]:
     if expect == D:
         return (DEFER_OK, "") if not answered else (WRONG, "답하면 안 되는데 답함")
     if not answered:
+        if getattr(r, "needs_attribute", ""):
+            return ATTR, f"{r.needs_attribute}를 붙여 달라고 안내함"
         return MISS, f"답해야 하는데 {r.outcome.value}"
     top = getattr(r, "top", None) or (r.hits[0] if r.hits else None)
     if top is None:
@@ -372,7 +379,7 @@ def main(argv: list[str] | None = None) -> int:
                 rows[-1]["bottleneck_where"] = where
 
         icon = {SURE: "✅", DEFER_OK: "✅", PAGE_Q: "📃", PAGE: "📄",
-                THIN: "🫥", MISS: "△", WRONG: "❌"}
+                THIN: "🫥", ATTR: "🔎", MISS: "△", WRONG: "❌"}
         if not args.quiet:
             cur = None
             for r in rows:
@@ -399,6 +406,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  ✅ 확신 {verdicts[SURE]} · ✅ 보류 {verdicts[DEFER_OK]}"
               f"  │  📃 문서+발췌 {verdicts[PAGE_Q]} · 📄 문서만 {verdicts[PAGE]}"
               f" · 🫥 쓸모없음 {verdicts[THIN]}"
+              f" · 🔎 형식안내 {verdicts[ATTR]}"
               f" · △ 모름 {verdicts[MISS]} · ❌ 틀림 {verdicts[WRONG]}")
         print("  ★ 문서까지·쓸모없음은 안전하지만 정답으로 세지 않는다 — "
               "학생 질문에 답한 게 아니다")

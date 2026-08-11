@@ -465,6 +465,19 @@ def _handle_section(db_path: pathlib.Path, utterance: str, *,
     #   여기서 가로채면 **대안 없는 답**으로 바꾸는 셈이 된다.
     if only_confident and result.outcome is not section_search.Outcome.FOUND:
         return None
+    # ★ 형식 안내 되묻기 — 답이 학과에 달려 있을 때.
+    #   버튼으로는 안 된다. 학과가 60곳이 넘어서 10개 상한에 안 들어가고,
+    #   5곳만 보여주면 나머지 학생에게는 틀린 목록이다.
+    if getattr(result, "needs_attribute", ""):
+        log.info("[clarify] 형식안내 attr=%s q=%r",
+                 result.needs_attribute, utterance[:30])
+        # ★ 예시 학과를 지어내지 않는다 — 실제로 후보에 오른 학과를 쓴다.
+        #   '경영학과' 라고 썼더니 그 이름의 사이트가 없어서 예시가 안 통했다.
+        #   우리가 못 찾는 이름을 예시로 주면 학생을 헛걸음시킨다.
+        return templates.render_attribute_hint(
+            result.subject or utterance, result.needs_attribute,
+            example_site=getattr(result.top, "site_name", ""))
+
     # ★ 되묻기 — 문서가 갈래를 갖고 있고 질문이 아무것도 안 골랐을 때만.
     #   섹션을 확신할 때는 건드리지 않는다. 페이지 단위로 내려간 자리만 대체한다.
     #   링크 주고 알아서 찾으라는 것보다 버튼 한 번이 적은 노력이다.
