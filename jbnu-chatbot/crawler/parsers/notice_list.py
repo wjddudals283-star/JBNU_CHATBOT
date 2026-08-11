@@ -36,6 +36,11 @@ _DATE = re.compile(r"(20\d{2})[.\-/](\d{1,2})[.\-/](\d{1,2})")
 _DETAIL_ID = re.compile(r"pf_DetailMove\(\s*'(\d+)'\s*\)")
 # 목록 표의 머리글·안내 문구는 글이 아니다
 NOT_A_ROW = ("게시물이", "등록된 게시물", "검색된 게시물", "총 0 건")
+# 앵커 안에 섞여 있는 게시판 UI 표시. 제목이 아니라 화면 장식이다.
+#   <span class="newArtcl">새글</span>
+# 문자열이 아니라 **구조**로 걷어낸다 — CMS 가 문구를 바꿔도 안 깨진다.
+UI_MARK_SELECTORS = (".newArtcl", ".ico", ".icon", ".label", ".badge",
+                     ".blind", ".hidden", "img")
 
 
 @dataclass
@@ -119,7 +124,18 @@ def parse(html: str, *, page_url: str = "") -> NoticeList:
         a = tr.css_first("a.artclLinkView") or tr.css_first("a")
         if a is None:
             continue
-        title = _norm(a.text())
+        for sel in UI_MARK_SELECTORS:
+            for n in a.css(sel):
+                n.decompose()
+        # 제목은 <strong> 안에 있다. 그 앞의 [분류] 는 제목이 아니다.
+        strong = a.css_first("strong")
+        title = _norm(strong.text()) if strong is not None else _norm(a.text())
+        inline_cat = ""
+        if strong is not None:
+            before = _norm(a.text()).replace(title, "")
+            m = re.search(r"\[\s*([^\]]{1,20})\s*\]", before)
+            if m:
+                inline_cat = _norm(m.group(1))
         url = _link_for(a, page_url or out.board_url)
         if not title or not url:
             out.skipped += 1
@@ -129,7 +145,7 @@ def parse(html: str, *, page_url: str = "") -> NoticeList:
             author=(cells[who_idx] if who_idx is not None
                     and who_idx < len(cells) else ""),
             category=(cells[cat_idx] if cat_idx is not None
-                      and cat_idx < len(cells) else "")))
+                      and cat_idx < len(cells) else inline_cat)))
     return out
 
 
