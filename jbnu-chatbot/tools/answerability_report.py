@@ -11,6 +11,28 @@
     expect="answer"  답해야 한다. 인용문에 must_contain 이 들어 있어야 맞다.
     expect="defer"   답하면 안 된다. 자료가 없거나 학과가 갈리는 질문.
 
+★ 판정 칸 — 뭉쳐 세면 고칠 수 있는지 없는지 알 수가 없다
+  전에는 ✅/△/❌ 셋이었고, ✅ 가 두 가지를 뭉쳐 세고 있었다.
+  must 를 **인용문 또는 경로**에서 찾았기 때문이다.
+
+      수강신청 언제야   인용문 '가. 사회봉사'   경로에 '수강신청' 있음  → ✅
+
+  경로가 맞다고 인용이 답인 것은 아니다. 학생이 받는 건 인용문이다.
+  전수로 세니 1등 인용문이 15자 이하인 문항이 42개 중 13개(31%)였다.
+  '1' · '1-2' · '가. 사회봉사' · '월간 일정' — 혼자서는 뜻이 없는 조각이다.
+  확신 오답이 아니라서 안 잡혔다. 안전하고, 쓸모가 없다.
+
+      확신      섹션까지 짚었고 must 가 **인용문 안**에 있다
+      문서까지   페이지 단위로 답했다 — '이 문서에 있다' 는 참이지만 어디인지는 안 말했다
+      쓸모없음   섹션을 짚었는데 must 가 인용문에 없고 **경로에만** 있다 = 조각
+      모름      답하지 않았다 (정직한 실패)
+      틀림      답하면 안 되는데 답했다 / must 가 어디에도 없다  ← 배포 조건
+
+  ★ 이 칸은 대리 지표가 아니다
+    자족성을 고치면 인용이 '휴학 절차' 블록으로 올라가 must 를 담게 된다.
+    쓸모없음 → 확신 으로 옮겨가며 숫자가 **저절로** 움직인다.
+    고치기 전에 칸을 나눠야 효과가 있었는지 알 수 있다.
+
     python tools/answerability_report.py --db data/jbnu.db
 """
 
@@ -170,28 +192,52 @@ def bottleneck(conn, q: str, must: str) -> tuple[str, str]:
     return "커버리지", "DB 어디에도 없음"
 
 
+# 판정 칸. 순서가 곧 학생에게 좋은 순서다.
+SURE, PAGE, THIN, MISS, WRONG, DEFER_OK = (
+    "확신", "문서까지", "쓸모없음", "모름", "틀림", "보류OK")
+# 정답으로 세는 칸. ★ '문서까지' 와 '쓸모없음' 은 안 센다 —
+#   안전하지만 학생 질문에 답한 것이 아니다. 되묻기가 노리는 칸이 바로 여기다.
+CORRECT = (SURE, DEFER_OK)
+
+
 def judge(q: str, expect: str, must: str, r) -> tuple[str, str]:
-    """(판정, 사유). 답해야 하는데 안 하면 miss, 하면 안 되는데 하면 wrong."""
+    """(판정, 사유).
+
+    ★ must 를 인용문에서 찾을 때와 경로에서 찾을 때를 **갈라 센다.**
+      학생이 받는 것은 인용문이다. 경로가 맞다고 인용이 답인 것은 아니다.
+    """
     answered = r.outcome is ss.Outcome.FOUND
     if expect == D:
-        return ("OK", "") if not answered else ("WRONG", "답하면 안 되는데 답함")
+        return (DEFER_OK, "") if not answered else (WRONG, "답하면 안 되는데 답함")
     if not answered:
-        return "MISS", f"답해야 하는데 {r.outcome.value}"
+        return MISS, f"답해야 하는데 {r.outcome.value}"
     top = getattr(r, "top", None) or (r.hits[0] if r.hits else None)
     if top is None:
-        return "MISS", "결과가 비었다"
+        return MISS, "결과가 비었다"
     if hasattr(top, "quote_text"):
         quote = top.quote_text or top.text
-        where = top.quote_path or ""
-        # 페이지 단위로 답할 때 우리가 주장하는 것은 '이 문서에 있다' 이지
-        # '이 문단이 답이다' 가 아니다. 그러면 문서 제목으로 채점해야 맞다.
-        if getattr(r, "page_level", False):
-            where = f"{where} {top.page_title}"
+        where = f"{top.quote_path or ''} {getattr(top, 'page_title', '')}"
     else:                                   # 공지 — 제목만 본다
         quote, where = top.title, top.board_name or ""
-    if must and must not in quote and must not in where:
-        return "WRONG", f"'{must}' 가 결과에 없음"
-    return "OK", ""
+    in_quote = (not must) or must in quote
+    in_where = bool(must) and must in where
+
+    # 페이지 단위로 답할 때 우리가 주장하는 것은 '이 문서에 있다' 이지
+    # '이 문단이 답이다' 가 아니다. 참이지만 확신은 아니다 — 따로 센다.
+    if getattr(r, "page_level", False):
+        # ★ 페이지 단위라고 한 칸에 몰면 또 뭉쳐 세는 것이다.
+        #   문서를 맞게 짚었어도 같이 보여주는 인용이 조각이면 학생은 못 쓴다.
+        if in_quote:
+            return PAGE, "문서까지만 짚었다"
+        if in_where:
+            return THIN, f"문서는 맞는데 인용에 '{must}' 가 없다"
+        return WRONG, f"'{must}' 가 결과에 없음"
+    if in_quote:
+        return SURE, ""
+    if in_where:
+        # ★ 여기가 뭉쳐 세던 칸이다. 안전하지만 학생에겐 쓸모가 없다.
+        return THIN, f"'{must}' 가 인용문에 없고 경로에만 있음"
+    return WRONG, f"'{must}' 가 결과에 없음"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -240,12 +286,13 @@ def main(argv: list[str] | None = None) -> int:
                 "matched": getattr(r, "candidates_matched", 0),
                 "depth": getattr(r, "answer_depth", 0),
             })
-            if v != "OK" and expect == A:
+            if v not in CORRECT and expect == A:
                 kind, where = bottleneck(conn, q, must)
                 rows[-1]["bottleneck"] = kind
                 rows[-1]["bottleneck_where"] = where
 
-        icon = {"OK": "✅", "MISS": "△", "WRONG": "❌"}
+        icon = {SURE: "✅", DEFER_OK: "✅", PAGE: "📄", THIN: "🫥",
+                MISS: "△", WRONG: "❌"}
         if not args.quiet:
             cur = None
             for r in rows:
@@ -253,18 +300,22 @@ def main(argv: list[str] | None = None) -> int:
                     cur = r["topic"]
                     print(f"── {cur} ──")
                 note = f"  ← {r['why']}" if r["why"] else ""
-                if r["verdict"] == "MISS" and r.get("defer"):
+                if r["verdict"] == MISS and r.get("defer"):
                     note += f"  [{r['defer']}]"
                 print(f"  {icon[r['verdict']]} {r['q']:20} "
                       f"{r['site'][:11]:13} {r['path'][:30]}{note}")
-                if r["verdict"] == "WRONG" and r["quote"]:
+                if r["verdict"] in (WRONG, THIN) and r["quote"]:
                     print(f"        인용: {r['quote'][:90]}")
 
         n = len(rows)
-        ok = verdicts["OK"]
+        ok = sum(verdicts[v] for v in CORRECT)
         print(f"\n{'='*72}")
-        print(f"균등 정확도 {ok}/{n} = {ok/n:.0%}   "
-              f"(✅ {ok} · △놓침 {verdicts['MISS']} · ❌틀림 {verdicts['WRONG']})")
+        print(f"균등 정확도 {ok}/{n} = {ok/n:.0%}")
+        print(f"  ✅ 확신 {verdicts[SURE]} · ✅ 보류 {verdicts[DEFER_OK]}"
+              f"  │  📄 문서까지 {verdicts[PAGE]} · 🫥 쓸모없음 {verdicts[THIN]}"
+              f" · △ 모름 {verdicts[MISS]} · ❌ 틀림 {verdicts[WRONG]}")
+        print("  ★ 문서까지·쓸모없음은 안전하지만 정답으로 세지 않는다 — "
+              "학생 질문에 답한 게 아니다")
         print(f"응답 중앙값 {sorted(lat)[len(lat)//2]:.0f}ms")
 
         # ★ 62% 항목의 오답과 5% 항목의 오답을 같은 무게로 세면 안 된다.
@@ -272,7 +323,8 @@ def main(argv: list[str] | None = None) -> int:
         #   학생이 겪는 것은 수요로 가중한 쪽이다. 둘을 나란히 낸다.
         per: dict[str, list[int]] = {}
         for r in rows:
-            per.setdefault(r["topic"], []).append(1 if r["verdict"] == "OK" else 0)
+            per.setdefault(r["topic"], []).append(
+                1 if r["verdict"] in CORRECT else 0)
         print("\n주제별")
         num = den = 0.0
         for topic, marks in per.items():
@@ -287,7 +339,15 @@ def main(argv: list[str] | None = None) -> int:
             print(f"\n★ 수요 가중 정확도 {num/den:.0%}   (균등 {ok/n:.0%})")
         # ★ 틀린 것과 놓친 것을 같은 무게로 세지 않는다.
         #   놓치면 학생이 다른 데를 찾는다. 틀리면 잘못된 곳으로 간다.
-        print(f"★ 확신하고 틀린 것 {verdicts['WRONG']}건 — 이게 0에 가까워야 배포할 수 있다")
+        print(f"★ 확신하고 틀린 것 {verdicts[WRONG]}건 — 이게 0에 가까워야 배포할 수 있다")
+
+        # ★ 안전하지만 쓸모없는 칸을 따로 본다 — 자족성이 노리는 자리다
+        thin = [r for r in rows if r["verdict"] == THIN]
+        if thin:
+            print(f"\n🫥 안전하지만 쓸모없음 {len(thin)}건 — "
+                  "경로는 맞는데 인용이 조각이다")
+            for r in thin:
+                print(f"  {r['q']:20} 인용 {r['quote'][:40]!r}")
 
         # ★ 후보 절단은 두 번 다 오답이 난 뒤에야 알았다. 이제 센다.
         #   상한을 얼마로 할지 추측하지 말고 천장에 몇 번 닿는지 세면 된다.
@@ -311,7 +371,7 @@ def main(argv: list[str] | None = None) -> int:
         # ★ 병목 — 더 긁을 것인가, 검색을 고칠 것인가
         #   DB 에 있는데 못 찾은 것이면 더 긁어도 나아지지 않는다.
         #   DB 에 없는 것이면 검색을 아무리 고쳐도 안 나온다.
-        miss = [r for r in rows if r["verdict"] != "OK" and r["expect"] == A]
+        miss = [r for r in rows if r["verdict"] not in CORRECT and r["expect"] == A]
         if miss:
             srch = [r for r in miss if r.get("bottleneck") == "검색"]
             cov = [r for r in miss if r.get("bottleneck") == "커버리지"]
