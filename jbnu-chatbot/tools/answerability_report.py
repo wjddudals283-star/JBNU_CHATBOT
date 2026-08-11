@@ -67,6 +67,10 @@ QUESTIONS: list[tuple[str, str, str, str]] = [
     ("학과", "간호대학 연혁", A, "간호"),
     ("학과", "컴퓨터인공지능학부 교육과정", A, "교과과정"),
     ("기타", "총장 누구야", A, "총장"),
+    # ── 공지 (제목 검색) ───────────────────────────────────────────
+    ("공지", "장학금 공지", A, "장학"),
+    ("공지", "수강신청 공지", A, "수강신청"),
+    ("공지", "교환학생", A, "교환학생"),
     # ── 답하면 안 되는 것 ──────────────────────────────────────────
     ("보류", "기숙사 통금", D, ""),          # 자료 없음
     ("보류", "분실물 찾기", D, ""),          # 자료 없음
@@ -84,9 +88,16 @@ def judge(q: str, expect: str, must: str, r) -> tuple[str, str]:
         return ("OK", "") if not answered else ("WRONG", "답하면 안 되는데 답함")
     if not answered:
         return "MISS", f"답해야 하는데 {r.outcome.value}"
-    quote = (r.top.quote_text or r.top.text) if r.top else ""
-    if must and must not in quote and must not in (r.top.quote_path or ""):
-        return "WRONG", f"'{must}' 가 인용문에 없음"
+    top = getattr(r, "top", None) or (r.hits[0] if r.hits else None)
+    if top is None:
+        return "MISS", "결과가 비었다"
+    if hasattr(top, "quote_text"):
+        quote = top.quote_text or top.text
+        where = top.quote_path or ""
+    else:                                   # 공지 — 제목만 본다
+        quote, where = top.title, top.board_name or ""
+    if must and must not in quote and must not in where:
+        return "WRONG", f"'{must}' 가 결과에 없음"
     return "OK", ""
 
 
@@ -107,12 +118,14 @@ def main(argv: list[str] | None = None) -> int:
         verdicts: collections.Counter = collections.Counter()
         for topic, q, expect, must in QUESTIONS:
             t0 = time.perf_counter()
-            r = ss.search(conn, q, repo=repo)
+            # 공지는 제목 검색이 담당한다. 같은 잣대로 잰다.
+            r = (ss.search_notices(conn, q, repo=repo) if topic == "공지"
+                 else ss.search(conn, q, repo=repo))
             ms = (time.perf_counter() - t0) * 1000
             lat.append(ms)
             v, why = judge(q, expect, must, r)
             verdicts[v] += 1
-            top = r.top
+            top = getattr(r, "top", None) or (r.hits[0] if r.hits else None)
             rows.append({
                 "topic": topic, "q": q, "expect": expect, "verdict": v,
                 "why": why, "outcome": r.outcome.value,

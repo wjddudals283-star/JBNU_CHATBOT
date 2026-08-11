@@ -980,10 +980,23 @@ def coverage_summary(conn: sqlite3.Connection) -> dict[str, Any]:
     ok = by_status.get("ok", 0)
     agg = conn.execute(
         "SELECT COUNT(*), SUM(is_leaf) FROM page_section").fetchone()
+
+    # ★ '본문이 없다' 와 '게시판이라 본문이 없다' 는 다른 상태다.
+    #   섞으면 커버리지가 실제보다 나빠 보이고 뭘 더 해야 할지도 알 수 없다.
+    boards = 0
+    if "board_items" in {r[1] for r in conn.execute(
+            "PRAGMA table_info(page_registry)")}:
+        boards = conn.execute(
+            "SELECT COUNT(*) FROM page_registry "
+            "WHERE board_items > 0 AND parse_status <> 'ok'").fetchone()[0]
+    empty = by_status.get("empty", 0)
     return {
         "total_pages": total,
         "by_status": {s: by_status.get(s, 0) for s in PARSE_STATUSES},
+        "boards": boards,                     # 게시판 — 공지 크롤러가 담당
+        "empty_no_content": max(empty - boards, 0),
         "answerable_ratio": round(ok / total, 3) if total else 0.0,
+        "covered_ratio": round((ok + boards) / total, 3) if total else 0.0,
         "sections": agg[0] or 0,
         "indexed_leaves": agg[1] or 0,
     }
@@ -1208,3 +1221,38 @@ def rebuild_notice_fts(conn: sqlite3.Connection) -> int:
            SELECT item_key, title, board_name FROM notice_item""")
     conn.commit()
     return conn.execute("SELECT COUNT(*) FROM notice_item_fts").fetchone()[0]
+
+
+def ensure_columns(conn: sqlite3.Connection) -> list[str]:
+    """이미 만들어진 DB 에 뒤늦게 생긴 칸을 붙인다.
+
+    CREATE TABLE IF NOT EXISTS 는 기존 테이블을 고치지 않는다.
+    스키마가 자란 뒤에 배포하면 조용히 옛 구조로 돈다 — 그게 더 위험하다.
+    """
+    added = []
+    have = {r[1] for r in conn.execute("PRAGMA table_info(page_registry)")}
+    for col, ddl in (("board_items", "INTEGER NOT NULL DEFAULT 0"),):
+        if col not in have:
+            conn.execute(f"ALTER TABLE page_registry ADD COLUMN {col} {ddl}")
+            added.append(col)
+    if added:
+        conn.commit()
+    return added
+
+
+def mark_boards(conn: sqlite3.Connection) -> int:
+    """공지를 담고 있는 페이지에 게시판 표시를 단다.
+
+    '본문이 없다' 로 남아 있던 페이지의 상당수가 게시판이었다.
+    구분하지 않으면 커버리지가 실제보다 나빠 보이고,
+    무엇을 더 해야 하는지도 알 수 없다.
+    """
+    ensure_columns(conn)
+    conn.execute("UPDATE page_registry SET board_items = 0")
+    conn.execute(
+        """UPDATE page_registry SET board_items = (
+               SELECT COUNT(*) FROM notice_item n
+                WHERE n.board_url = page_registry.page_url)""")
+    conn.commit()
+    return conn.execute(
+        "SELECT COUNT(*) FROM page_registry WHERE board_items > 0").fetchone()[0]

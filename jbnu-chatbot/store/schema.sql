@@ -452,6 +452,10 @@ CREATE TABLE IF NOT EXISTS page_registry (
   empty_block_count INTEGER NOT NULL DEFAULT 0,
   content_chars     INTEGER NOT NULL DEFAULT 0,
   pruned_nodes      INTEGER NOT NULL DEFAULT 0,
+  -- 이 페이지가 게시판이고 공지를 몇 건 담고 있나.
+  -- '본문이 없다(empty)' 와 '게시판이라 본문이 없다' 는 다른 상태다.
+  -- 전자는 우리가 못 읽은 것이고 후자는 공지 크롤러가 읽은 것이다.
+  board_items       INTEGER NOT NULL DEFAULT 0,
   last_modified   TEXT,             -- 페이지가 스스로 표시한 최종수정일
   title           TEXT NOT NULL DEFAULT '',
   error_message   TEXT,

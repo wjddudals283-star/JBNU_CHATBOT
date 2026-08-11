@@ -388,7 +388,8 @@ def detect_profile(tree) -> Profile | None:
     return None
 
 
-def content_root(html: str, profile: Profile | None = None):
+def content_root(html: str, profile: Profile | None = None,
+                 boilerplate_report=None):
     """본문 컨테이너를 찾아 네비게이션·게시판을 걷어낸 (트리, 본문, 프로필).
 
     조각 수집과 파싱이 **같은 것**을 보게 하려면 이 함수를 공유해야 한다.
@@ -406,6 +407,12 @@ def content_root(html: str, profile: Profile | None = None):
         for sel in GENERIC.drop_selectors:
             for n in tree.css(sel):
                 n.decompose()
+        # ★ 밀도로 고르기 **전에** 템플릿을 잘라낸다.
+        #   순서가 반대면 푸터(주소·연락처)가 본문으로 뽑히고,
+        #   그 뒤에 아무리 잘라도 이미 본문을 놓친 뒤다.
+        #   실제로 생활관 페이지에서 주소 문단이 본문으로 잡혔다.
+        if boilerplate_report is not None:
+            boilerplate.prune(tree.css_first("body") or tree, boilerplate_report)
         body = _densest_node(tree)
     if body is None:
         raise ParseError(
@@ -431,8 +438,11 @@ def content_root(html: str, profile: Profile | None = None):
 
 def page_fragments(html: str, profile: Profile | None = None) -> dict[str, str]:
     """보일러플레이트 1차 수집용 — 이 페이지 본문의 조각 해시."""
-    _, body, _ = content_root(html, profile)
-    return boilerplate.fragments(body)
+    tree, body, prof = content_root(html, profile)
+    # 일반 프로필은 본문 컨테이너 자체가 아직 안 정해졌다.
+    # 페이지 전체에서 조각을 세야 푸터·네비게이션이 후보에 들어온다.
+    node = (tree.css_first("body") or body) if prof is GENERIC else body
+    return boilerplate.fragments(node)
 
 
 def fragments_with_profile(html: str, host: str = "") -> tuple[str, dict[str, str]]:
@@ -441,18 +451,20 @@ def fragments_with_profile(html: str, host: str = "") -> tuple[str, dict[str, st
     보일러플레이트는 CMS 마다 따로 세야 한다. 섞어서 세면 본부 템플릿이
     학과 페이지 수에 희석돼 임계를 못 넘고, 반대도 마찬가지다.
     """
-    _, body, prof = content_root(html, None)
+    tree, body, prof = content_root(html, None)
+    node = (tree.css_first("body") or body) if prof is GENERIC else body
     # 일반 프로필은 사이트마다 템플릿이 다르다. 섞어서 세면 아무것도 안 걸린다.
     key = f"{prof.key}:{host}" if prof is GENERIC and host else prof.key
-    return key, boilerplate.fragments(body)
+    return key, boilerplate.fragments(node)
 
 
 def parse(html: str, *, page_url: str = "", boilerplate_report=None,
           profile: Profile | None = None) -> ParseResult:
     """boilerplate_report 를 주면 파싱 **전에** 템플릿 조각을 DOM 에서 잘라낸다."""
-    tree, body, prof = content_root(html, profile)
+    tree, body, prof = content_root(html, profile, boilerplate_report)
     prune_info = {"pruned": 0, "held": 0, "chars_removed": 0}
     if boilerplate_report is not None:
+        # 일반 프로필은 content_root 안에서 이미 잘라냈다 (밀도로 고르기 전에).
         prune_info = boilerplate.prune(body, boilerplate_report)
 
     title_node = tree.css_first("h1.com-title-01") or tree.css_first("title")
