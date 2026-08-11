@@ -29,7 +29,7 @@ from fastapi import Depends, FastAPI, Request
 
 from skill import (aliases, auth, branch, calendar_search, ingest_api, kakao,
                    manual_answers, section_search,
-                   routing, safety, templates)
+                   routing, safety, smalltalk, templates)
 from store import repo
 
 log = logging.getLogger("jbnu.skill")
@@ -305,6 +305,15 @@ def handle(db_path: pathlib.Path, block_name: str | None, payload: dict,
     if safety.is_sensitive(utterance):
         return safety.response(utterance)
 
+    # ── 1-b. 인사·잡담. 질문이 아닌 말을 검색에 태우지 않는다 ──
+    #    폴백을 검색으로 연결하면 학생이 아무 말이나 보낼 수 있게 된다.
+    #    그게 목적이지만, '오늘 뭐해' 에 '연설문' 을 보여주는 건 아는 척이다.
+    #    문장 전체가 일치할 때만 걸린다 — '밥 뭐야' 는 진짜 질문이라 통과한다.
+    kind = smalltalk.classify(utterance)
+    if kind:
+        log.info("[skill] smalltalk=%s utterance=%r", kind, utterance[:40])
+        return smalltalk.response(kind)
+
     # ── 2. 블록 라우팅 ──
     handler, via = routing.resolve(payload, path_block=block_name)
     log.info("[skill] block=%r via=%s utterance=%r",
@@ -332,9 +341,28 @@ def handle(db_path: pathlib.Path, block_name: str | None, payload: dict,
     if handler == "notice.search":
         return _handle_notice(db_path, utterance)
 
-    # ★ 매핑된 블록이 없어도 **먼저 찾아본다.**
-    #   모아둔 안내가 있는데 폴백을 내보내면, 아는 것을 모른다고 하는 것이 된다.
-    #   찾아도 안 나오면 그때 폴백이다 — 조회 여부를 답에 밝힌다.
+    # ★ 카카오가 분류에 실패한 말(폴백)은 검색이 정확히 할 일이다.
+    #   오픈빌더 블록의 발화 목록은 몇 개뿐이고 학생은 그대로 말하지 않는다.
+    #   '복학 신청' 한 마디가 폴백으로 가서 스킬을 부르지도 못했다 —
+    #   6,985페이지를 모아도 이 문이 닫혀 있으면 안 쓰인다.
+    #   여기서는 info.search 와 **똑같이** 답한다. 애매하면 애매하다고,
+    #   못 찾으면 못 찾았다고 말한다 — 그게 밋밋한 폴백보다 낫다.
+    if routing.is_fallback(payload, path_block=block_name):
+        # 식단·공지·일정은 검색이 아니라 각자의 자료를 봐야 한다.
+        # '오늘 학식' 을 안내 검색에 넣으면 '오늘' 을 찾다가 실패한다.
+        guess, why = routing.by_utterance(utterance)
+        log.info("[skill] fallback→%s (%s)", guess or "info.search", why)
+        if guess == "food.menu.today":
+            return _handle_meal(db_path, params, detail, utterance, now=now)
+        if guess == "deadline.upcoming":
+            return _handle_upcoming(db_path, params, detail, utterance, now=now)
+        if guess == "notice.search":
+            return _handle_notice(db_path, utterance)
+        return _handle_section(db_path, utterance)
+
+    # ★ 매핑 안 된 **총학이 만든** 블록은 다르다.
+    #   상담 신청 블록이 검색 결과를 뱉으면 조용히 엉뚱한 답이 된다.
+    #   확신할 때만 답하고, 아니면 폴백 + 이름을 기록한다.
     answered = _handle_section(db_path, utterance, only_confident=True)
     return answered if answered is not None else templates.render_fallback()
 

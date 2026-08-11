@@ -116,6 +116,54 @@ def resolve(payload: dict, *, path_block: str | None = None,
     return None, "unmapped"
 
 
+def by_utterance(utterance: str,
+                 config_path: pathlib.Path | None = None) -> tuple[str | None, str]:
+    """폴백으로 들어온 말의 갈래를 별칭으로 정한다. **폴백 경로에서만 쓴다.**
+
+    ★ 원칙을 어기는 게 아니라 적용 범위가 다르다
+      '모르는 블록은 추측해서 보내지 않는다' 는 총학이 만든 블록 얘기다.
+      거기서 추측하면 상담 블록이 식단을 뱉는다.
+      폴백은 이미 분류에 실패한 말이고, 대안은 **틀린 답이 아니라 못 찾음**이다.
+      '오늘 학식' 에 "'오늘' 관련 안내는 못 찾았어요" 를 내보내는 것보다 낫다.
+
+    ★ 가장 긴 별칭이 이긴다
+      '학식 메뉴' 와 '학식' 이 둘 다 걸리면 긴 쪽이 더 많이 말해준다.
+    """
+    u = _norm(utterance)
+    if not u:
+        return None, "empty"
+    best: tuple[int, str, str] | None = None
+    for handler, names in (load(config_path).get("handlers") or {}).items():
+        for n in list(names or []) + [handler]:
+            k = _norm(n)
+            # 한 글자짜리는 아무 데나 걸린다. 두 글자부터 본다.
+            if len(k) >= 2 and k in u and (best is None or len(k) > best[0]):
+                best = (len(k), handler, n)
+    if best is None:
+        return None, "no-alias"
+    return best[1], f"alias:{best[2]}"
+
+
+def is_fallback(payload: dict, *, path_block: str | None = None,
+                config_path: pathlib.Path | None = None) -> bool:
+    """카카오가 어느 블록도 못 고른 말인가.
+
+    폴백은 '모르는 블록' 과 다르다.
+      모르는 블록  = 총학이 만들었는데 매핑을 안 한 것 → 함부로 검색에 태우면
+                    엉뚱한 도메인 블록이 검색 결과를 뱉는다. 보수적으로 간다.
+      폴백 블록    = 애초에 분류에 실패한 말 → **검색이 정확히 할 일이다.**
+    """
+    names = {_norm(n) for n in (load(config_path).get("fallback_blocks") or [])}
+    if not names:
+        return False
+    block = (payload.get("userRequest") or {}).get("block") or {}
+    for cand in (path_block, block.get("name"),
+                 (payload.get("intent") or {}).get("name")):
+        if cand and _norm(str(cand)) in names:
+            return True
+    return False
+
+
 def _remember(block_id: str, name: str, utterance: str) -> None:
     """매핑 안 된 블록을 기록한다. 차단만 하지 않고 해제 경로를 준다."""
     key = f"{block_id}|{name}"
