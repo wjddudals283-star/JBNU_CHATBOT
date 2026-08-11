@@ -285,6 +285,8 @@ def main(argv: list[str] | None = None) -> int:
                 "truncated": getattr(r, "candidates_truncated", False),
                 "matched": getattr(r, "candidates_matched", 0),
                 "depth": getattr(r, "answer_depth", 0),
+                "margin": round(getattr(r, "section_margin", 0.0) or 0.0, 2),
+                "page_level": bool(getattr(r, "page_level", False)),
             })
             if v not in CORRECT and expect == A:
                 kind, where = bottleneck(conn, q, must)
@@ -348,6 +350,27 @@ def main(argv: list[str] | None = None) -> int:
                   "경로는 맞는데 인용이 조각이다")
             for r in thin:
                 print(f"  {r['q']:20} 인용 {r['quote'][:40]!r}")
+
+        # ★ 마진 분포 — '문서까지' 가 안 줄었을 때 어디를 볼지 미리 정해 둔다
+        #   동점(1.00)은 임계값으로 못 푼다. 1.5 → 1.2 → 1.1 로 낮춰도 안 통과하고,
+        #   통과시키려면 1.0 이하여야 하는데 그건 안전장치를 끄는 것이다.
+        #   문턱이 높은 게 아니라 **점수가 안 갈리는** 것이다.
+        #   동점이 많다  → 집계 승격이 정확히 그걸 겨냥한 것
+        #   동점이 적은데 문서까지가 많다 → 원인이 딴 데 있다
+        pl = [r for r in rows if r["page_level"]]
+        if pl:
+            b: collections.Counter = collections.Counter()
+            for r in pl:
+                m = r["margin"]
+                b["동점 1.00" if m <= 1.0 else "1.0~1.2" if m < 1.2
+                  else "1.2~1.5" if m < 1.5 else "1.5+"] += 1
+            print(f"\n페이지 단위로 내려간 {len(pl)}문항의 섹션 마진")
+            for k in ("동점 1.00", "1.0~1.2", "1.2~1.5", "1.5+"):
+                if b[k]:
+                    print(f"  {k:10} {b[k]:3}")
+            print(f"  → 문턱 {ss.SECTION_MARGIN} 을 낮춰서 구제되는 건 "
+                  f"{b['1.0~1.2'] + b['1.2~1.5']}건뿐이다. "
+                  f"동점 {b['동점 1.00']}건은 임계값으로 못 푼다.")
 
         # ★ 후보 절단은 두 번 다 오답이 난 뒤에야 알았다. 이제 센다.
         #   상한을 얼마로 할지 추측하지 말고 천장에 몇 번 닿는지 세면 된다.
