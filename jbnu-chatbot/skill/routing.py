@@ -44,12 +44,23 @@ def load(path: pathlib.Path | None = None) -> dict:
 
 
 def _norm(s: str) -> str:
-    return re.sub(r"\s+", "", (s or "")).lower()
+    """블록 이름 비교용 정규화.
+
+    ★ 점·하이픈·밑줄·공백을 전부 지운다.
+      오픈빌더에 'info.search' 로 만들었더니 카카오가 'infosearch' 로 저장했다.
+      이름을 바꾼 것은 총학이 아니라 **플랫폼 자신**이었다 —
+      우리가 통제할 수 없는 변형이므로, 비교하는 쪽에서 흡수한다.
+      안 그러면 블록을 추가할 때마다 같은 문제가 난다.
+    """
+    return re.sub(r"[\s._\-]+", "", (s or "")).lower()
 
 
 def _name_index(doc: dict) -> dict[str, str]:
     out: dict[str, str] = {}
     for handler, names in (doc.get("handlers") or {}).items():
+        # 핸들러 키 자체도 이름으로 쓴다. 별칭에 안 적어도 매칭되게 —
+        # 별칭 목록에 빠뜨리는 것이 가장 흔한 실수다.
+        out[_norm(handler)] = handler
         for n in names or []:
             out[_norm(n)] = handler
     return out

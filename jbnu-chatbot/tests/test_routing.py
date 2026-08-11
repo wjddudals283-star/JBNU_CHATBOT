@@ -216,3 +216,28 @@ def test_설정에_정의된_핸들러가_전부_구현돼_있다():
     src = inspect.getsource(server.handle)
     for h in routing.known_handlers():
         assert f'"{h}"' in src, f"{h} 가 server.handle 에 없다"
+
+
+def test_카카오가_점을_지워도_라우팅이_안_끊긴다():
+    """오픈빌더에 'info.search' 로 만들었더니 카카오가 'infosearch' 로 저장했다.
+
+    이름을 바꾼 것은 총학이 아니라 **플랫폼 자신**이었다.
+    우리가 통제할 수 없는 변형이므로 비교하는 쪽에서 흡수한다.
+    """
+    for name, expect in [("infosearch", "info.search"),
+                         ("info.search", "info.search"),
+                         ("INFO SEARCH", "info.search"),
+                         ("noticesearch", "notice.search"),
+                         ("deadlineupcoming", "deadline.upcoming"),
+                         ("foodmenutoday", "food.menu.today")]:
+        h, _ = routing.resolve(_payload(block_name=name))
+        assert h == expect, name
+
+
+def test_핸들러_키를_별칭에_안_적어도_매칭된다():
+    """별칭 목록에 빠뜨리는 것이 가장 흔한 실수다."""
+    import yaml
+    doc = yaml.safe_load(routing.CONFIG_PATH.read_text(encoding="utf-8"))
+    for handler in doc["handlers"]:
+        h, _ = routing.resolve(_payload(block_name=handler.replace(".", "")))
+        assert h == handler, handler

@@ -75,6 +75,8 @@ TABLE_OFFTOPIC_PENALTY = 0.35
 DEPT_SPECIFIC_SITES = 4
 # 문서의 주제가 드러나는 자리 — 제목과 첫머리
 TOPIC_ZONE_CHARS = 140
+# 핵심 낱말의 이 비율 이상 무게를 가진 낱말은 함께 필수로 본다
+CORE_MARGIN = 0.7
 # 이 비율 이상의 섹션에 나오는 낱말은 '군더더기' 로 본다.
 # '규정' '방법' '절차' 는 질문을 이루지만 주제를 좁히지 않는다.
 # 목록을 코드에 박지 않고 **실제 출현 수**로 가린다 — 사이트가 바뀌면 값도 바뀐다.
@@ -353,6 +355,13 @@ def search(conn, utterance: str, *, repo) -> SearchResult:
     #   (드문 정도 × 낱말 길이). 순위를 매길 때 믿는 값을 여기서도 믿는다.
     weights = _weights(tokens, total, df)
     core = max(tokens, key=lambda t: weights.get(t, 0.0))
+    # ★ 무게가 엇비슷한 낱말은 **둘 다** 뜻을 지고 있다.
+    #   '공연 일정' 에서 삼성문화회관 200페이지를 긁은 뒤 '공연' 이 흔해져
+    #   '일정' 이 핵심으로 뽑혔고, 학사일정 문서가 답으로 나갔다.
+    #   하나만 고르면 코퍼스가 바뀔 때마다 뜻이 바뀐다.
+    top_w = weights.get(core, 0.0)
+    required = [t for t in tokens
+                if weights.get(t, 0.0) >= top_w * CORE_MARGIN]
     rows = repo.search_sections(conn, tokens, host=site_host)
     hits = score_rows(rows, tokens, weights, hq_boost=site_host is None)
     hits = _dedupe_by_page(hits)
@@ -377,7 +386,7 @@ def search(conn, utterance: str, *, repo) -> SearchResult:
     rivals = [h for h in hits[1:MAX_CANDIDATES]
               if h.score >= top.score * AMBIGUOUS_RATIO]
     result.hits = hits[:MAX_CANDIDATES]
-    result.missing_tokens = ([core] if core not in top.matched else [])
+    result.missing_tokens = [t for t in required if t not in top.matched]
 
     # ★ 긍정 단정에는 높은 근거를 요구한다.
     #   질문의 낱말 하나가 어디에도 안 맞았는데 확신하면 엉뚱한 문서를 답으로 준다.
@@ -395,9 +404,11 @@ def search(conn, utterance: str, *, repo) -> SearchResult:
     #     "내 제목에 내 말이 있다" 는 순환 논리가 된다. 부모 경로만 본다.
     topic_zone = (f"{top.quote_path} {top.page_title} "
                   f"{top.quote_text[:TOPIC_ZONE_CHARS]}")
-    if core not in topic_zone:
+    off = [t for t in required if t not in topic_zone]
+    if off:
         result.outcome = Outcome.AMBIGUOUS
-        result.defer_reason = f"'{core}' 가 제목·첫머리에 없음 (본문에서 스침)"
+        result.defer_reason = (f"'{' '.join(off)}' 가 제목·첫머리에 없음 "
+                               f"(본문에서 스침)")
         return result
 
     # 제목에 질문의 말이 없어도 답이 아닌 것은 아니다.

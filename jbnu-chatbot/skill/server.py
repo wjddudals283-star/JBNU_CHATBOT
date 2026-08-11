@@ -232,6 +232,10 @@ def create_app(db_path: pathlib.Path | None = None, *,
         try:
             summary = repo.coverage_summary(c)
             gaps = repo.coverage_gaps(c, limit=limit)
+            # ★ 전체 평균은 학생이 겪는 것을 말해주지 않는다.
+            #   수요가 높은데 커버가 낮은 도메인이 진짜 구멍이다.
+            by_domain = repo.coverage_by_domain(c)
+            weighted = repo.demand_weighted_coverage(by_domain)
         finally:
             c.close()
         # '왜 못 하는가' 를 상태별로 갈라 준다. 다 '모른다' 로 뭉치면 고칠 수 없다.
@@ -244,7 +248,8 @@ def create_app(db_path: pathlib.Path | None = None, *,
             "not_attempted": "발견만 하고 아직 시도 안 함",
             "skipped": "대상 아님",
         }
-        return {**summary, "status_meaning": meaning, "gaps": gaps}
+        return {**summary, **weighted, "by_domain": by_domain,
+                "status_meaning": meaning, "gaps": gaps}
 
     # ★ 총학이 직접 넣은 답의 상태. 만료·미확인을 여기서 본다.
     #   만료된 뒤에 아는 것은 늦으므로 30일 전에 미리 알린다.
@@ -367,6 +372,10 @@ def _handle_section(db_path: pathlib.Path, utterance: str, *,
     # ★ 폴백에서는 **확실할 때만** 답한다.
     #   애매한 결과까지 받아치면 "안녕하세요" 에 총장 연설문 목록이 나간다.
     #   실제로 그랬다. 인사말은 검색어가 아니다.
+    #
+    #   수집 전(NO_DATA)에도 폴백으로 넘긴다. 폴백이 이미
+    #   "아직 준비되지 않았어요 + 지금 되는 것들" 을 알려주므로,
+    #   여기서 가로채면 **대안 없는 답**으로 바꾸는 셈이 된다.
     if only_confident and result.outcome is not section_search.Outcome.FOUND:
         return None
     return templates.render_section(result, utterance=utterance)

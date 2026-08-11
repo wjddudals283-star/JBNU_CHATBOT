@@ -1260,3 +1260,98 @@ def mark_boards(conn: sqlite3.Connection) -> int:
     conn.commit()
     return conn.execute(
         "SELECT COUNT(*) FROM page_registry WHERE board_items > 0").fetchone()[0]
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# 수요 도메인 축
+#
+# 전체 커버리지는 평균일 뿐이다. 못 읽는 페이지가 수요 1위에 몰려 있으면
+# 학생이 겪는 커버리지는 훨씬 낮다. 평균 하나로는 그걸 못 본다.
+
+_DOMAIN_CACHE: list[dict] | None = None
+
+
+def demand_domains() -> list[dict]:
+    global _DOMAIN_CACHE
+    if _DOMAIN_CACHE is None:
+        import yaml
+        p = (pathlib.Path(__file__).resolve().parents[1]
+             / "config" / "demand_domains.yaml")
+        doc = yaml.safe_load(p.read_text(encoding="utf-8")) if p.exists() else {}
+        _DOMAIN_CACHE = doc.get("domains") or []
+    return _DOMAIN_CACHE
+
+
+def classify_domain(text: str) -> str:
+    """제목·경로로 수요 도메인을 정한다.
+
+    완벽한 분류가 목적이 아니다. 어느 쪽에 구멍이 났는지 보는 것이 목적이다.
+    아무 데도 안 걸리면 '미분류' 로 남긴다 — 억지로 채우면 그게 추측이 된다.
+    """
+    t = text or ""
+    best, best_hit = "unclassified", 0
+    for d in demand_domains():
+        hit = sum(1 for k in d.get("keywords", []) if k in t)
+        if hit > best_hit:
+            best, best_hit = d["key"], hit
+    return best
+
+
+def coverage_by_domain(conn: sqlite3.Connection) -> list[dict]:
+    """도메인별 커버리지. 못 읽는 것이 어디에 몰려 있는지 본다."""
+    rows = conn.execute(
+        "SELECT page_url, path, title, parse_status, "
+        "COALESCE(board_items, 0) AS board_items FROM page_registry"
+    ).fetchall() if "board_items" in {
+        r[1] for r in conn.execute("PRAGMA table_info(page_registry)")
+    } else conn.execute(
+        "SELECT page_url, path, title, parse_status, 0 AS board_items "
+        "FROM page_registry").fetchall()
+
+    labels = {d["key"]: d["label"] for d in demand_domains()}
+    weights = {d["key"]: d.get("weight", 0) for d in demand_domains()}
+    agg: dict[str, dict] = {}
+    for r in rows:
+        key = classify_domain(f"{r['title']} {r['path']}")
+        a = agg.setdefault(key, {"domain": key,
+                                 "label": labels.get(key, "미분류"),
+                                 "weight": weights.get(key, 0),
+                                 "total": 0, "ok": 0, "board": 0,
+                                 "empty": 0, "unreadable": 0})
+        a["total"] += 1
+        if r["parse_status"] == "ok":
+            a["ok"] += 1
+        elif r["board_items"] > 0:
+            a["board"] += 1
+        elif r["parse_status"] == "empty":
+            a["empty"] += 1
+        else:
+            a["unreadable"] += 1
+    out = list(agg.values())
+    for a in out:
+        t = a["total"] or 1
+        a["covered_ratio"] = round((a["ok"] + a["board"]) / t, 3)
+    out.sort(key=lambda a: (-a["weight"], -a["total"]))
+    return out
+
+
+def demand_weighted_coverage(rows: list[dict]) -> dict:
+    """수요로 가중한 커버율.
+
+    전체 평균은 학생이 겪는 것을 말해주지 않는다.
+    수요 없는 페이지(학과 연혁·조직도)가 평균을 끌어내리거나 올린다.
+    둘을 나란히 봐야 어느 쪽이 진짜인지 안다.
+    """
+    weighted = [r for r in rows if r["weight"] > 0]
+    tot_w = sum(r["weight"] for r in weighted)
+    if not tot_w:
+        return {"demand_weighted": None, "domains": 0}
+    val = sum(r["weight"] * r["covered_ratio"] for r in weighted) / tot_w
+    worst = min(weighted, key=lambda r: r["covered_ratio"])
+    return {
+        "demand_weighted": round(val, 3),
+        "domains": len(weighted),
+        # 수요가 높은데 커버가 낮은 곳 — 여기가 학생이 실제로 겪는 구멍이다
+        "weakest": {"label": worst["label"], "weight": worst["weight"],
+                    "covered_ratio": worst["covered_ratio"]},
+    }
