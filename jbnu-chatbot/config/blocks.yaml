@@ -44,6 +44,14 @@ handlers:
     - 휴학
     - 졸업요건
 
+  # 공지 검색 — 제목·게시일·링크만. 본문은 읽지 않는다.
+  notice.search:
+    - notice.search
+    - 공지
+    - 공지사항
+    - 모집
+    - 게시판
+
 # block.id → 핸들러. 이름을 바꿔도 안 끊긴다.
 # 오픈빌더에서 블록을 만든 뒤 봇테스트 payload 의 userRequest.block.id 를 보고 채운다.
 # 비어 있어도 이름 매핑으로 동작한다.

@@ -305,12 +305,31 @@ def handle(db_path: pathlib.Path, block_name: str | None, payload: dict,
         return _handle_upcoming(db_path, params, detail, utterance, now=now)
     if handler == "info.search":
         return _handle_section(db_path, utterance)
+    if handler == "notice.search":
+        return _handle_notice(db_path, utterance)
 
     # ★ 매핑된 블록이 없어도 **먼저 찾아본다.**
     #   모아둔 안내가 있는데 폴백을 내보내면, 아는 것을 모른다고 하는 것이 된다.
     #   찾아도 안 나오면 그때 폴백이다 — 조회 여부를 답에 밝힌다.
     answered = _handle_section(db_path, utterance, only_confident=True)
     return answered if answered is not None else templates.render_fallback()
+
+
+def _handle_notice(db_path: pathlib.Path, utterance: str) -> dict:
+    """공지 검색 — 제목·게시일·링크만.
+
+    본문을 안 읽었으므로 내용을 아는 척하지 않는다.
+    '이런 공지가 있고 여기서 볼 수 있다' 까지가 우리가 아는 전부다.
+    """
+    conn = repo.connect(db_path)
+    try:
+        result = section_search.search_notices(conn, utterance, repo=repo)
+    finally:
+        conn.close()
+    log.info("[skill] notice tokens=%s outcome=%s hits=%s pool=%s",
+             result.query_tokens, result.outcome.value, len(result.hits),
+             result.searched_total)
+    return templates.render_notices(result, utterance=utterance)
 
 
 def _handle_section(db_path: pathlib.Path, utterance: str, *,

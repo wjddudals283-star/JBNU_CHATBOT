@@ -352,18 +352,28 @@ def _densest_node(tree):
     total = len(re.sub(r"\s+", "", body.text() or ""))
     if total < MIN_GENERIC_CHARS:
         return None
-    best, best_score = None, 0.0
-    for n in body.traverse(include_text=False):
-        if n.tag not in ("div", "section", "article", "main", "td"):
-            continue
-        txt = len(re.sub(r"\s+", "", n.text() or ""))
-        if txt < MIN_GENERIC_CHARS or txt > total * 0.9:
-            continue
-        link = sum(len(re.sub(r"\s+", "", a.text() or "")) for a in n.css("a"))
-        score = txt - 1.5 * link
-        if score > best_score:
-            best, best_score = n, score
-    return best
+    # 상한을 두 번 나눠 시도한다.
+    #   1차 0.9  — 보통은 본문이 페이지 껍데기보다 작다
+    #   2차 0.99 — 한 덩어리에 다 들어 있는 페이지(SPA)가 있다.
+    #              상한 하나로 자르면 그런 페이지는 통째로 버려진다.
+    #              실제로 공과대학 52,000자짜리 페이지들이 그렇게 날아갔다.
+    for cap in (0.9, 0.99):
+        best, best_score = None, 0.0
+        for n in body.traverse(include_text=False):
+            if n.tag not in ("div", "section", "article", "main", "td"):
+                continue
+            txt = len(re.sub(r"\s+", "", n.text() or ""))
+            if txt < MIN_GENERIC_CHARS or txt > total * cap:
+                continue
+            link = sum(len(re.sub(r"\s+", "", a.text() or "")) for a in n.css("a"))
+            score = txt - 1.5 * link
+            if score > best_score:
+                best, best_score = n, score
+        if best is not None:
+            return best
+    # 그래도 없으면 본문 전체를 쓴다. 네비게이션이 섞이지만
+    # 사이트별 보일러플레이트 탐지가 걷어낸다 — 통째로 버리는 것보다 낫다.
+    return body if total >= MIN_GENERIC_CHARS else None
 
 
 def detect_profile(tree) -> Profile | None:

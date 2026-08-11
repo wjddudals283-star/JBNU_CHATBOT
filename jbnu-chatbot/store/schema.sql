@@ -506,3 +506,41 @@ CREATE VIRTUAL TABLE IF NOT EXISTS page_section_fts USING fts5(
   path,
   tokenize = 'trigram'
 );
+
+
+-- ─────────────────────────────────────────────────────────────────────────
+-- 공지 목록.
+--
+-- ★ 구조화하지 않는다. 목록에 적힌 것만 그대로 옮긴다.
+--   본문을 읽지 않고 분류도 추론하지 않는다. 게시글은 형식이 제각각이라
+--   구조화하면 틀리기 시작한다. '이런 공지가 있고 여기서 볼 수 있다' 까지가
+--   우리가 정직하게 말할 수 있는 전부다.
+--
+-- 사실 테이블이 아니라 **목록 테이블**이다. verified 필터를 타지 않고,
+-- 대신 어느 게시판에서 언제 봤는지를 반드시 들고 다닌다.
+CREATE TABLE IF NOT EXISTS notice_item (
+  item_key     TEXT PRIMARY KEY,
+  url          TEXT NOT NULL,
+  title        TEXT NOT NULL,
+  published_at TEXT,                 -- 목록에 날짜가 없으면 NULL. 지어내지 않는다.
+  category     TEXT NOT NULL DEFAULT '',   -- 목록에 '분류' 칸이 있을 때만
+  author       TEXT NOT NULL DEFAULT '',
+  board_url    TEXT NOT NULL,
+  board_name   TEXT NOT NULL DEFAULT '',
+  host         TEXT NOT NULL,
+  site_name    TEXT NOT NULL DEFAULT '',
+  observed_at  TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_notice_item_pub  ON notice_item(published_at DESC);
+CREATE INDEX IF NOT EXISTS idx_notice_item_brd  ON notice_item(board_url);
+CREATE INDEX IF NOT EXISTS idx_notice_item_host ON notice_item(host);
+
+-- 제목 검색. 섹션과 같은 이유로 trigram 을 쓴다 —
+-- 한국어는 조사가 붙어 '수강신청은' 처럼 한 낱말이 된다.
+CREATE VIRTUAL TABLE IF NOT EXISTS notice_item_fts USING fts5(
+  item_key UNINDEXED,
+  title,
+  board_name,
+  tokenize = 'trigram'
+);

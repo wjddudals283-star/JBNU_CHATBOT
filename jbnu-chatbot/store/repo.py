@@ -1124,3 +1124,87 @@ def get_section(conn: sqlite3.Connection, section_key: str) -> dict | None:
              JOIN page_registry r ON r.page_url = s.page_url
             WHERE s.section_key = ?""", (section_key,)).fetchone()
     return dict(r) if r else None
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# 공지 목록 — 제목·게시일·링크·게시판만. 구조화하지 않는다.
+
+def notice_total(conn: sqlite3.Connection) -> int:
+    return conn.execute("SELECT COUNT(*) FROM notice_item").fetchone()[0]
+
+
+def has_notice_fts(conn: sqlite3.Connection) -> bool:
+    return bool(conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE name = 'notice_item_fts'").fetchone())
+
+
+def replace_notices(conn: sqlite3.Connection, *, board_url: str, items,
+                    host: str, board_name: str, site_name: str,
+                    observed_at: str) -> int:
+    """한 게시판의 목록을 통째로 갈아끼운다.
+
+    게시판은 페이지가 넘어가면 글이 밀려난다. 부분 갱신을 하면
+    이미 사라진 글이 계속 남아 유령 링크가 된다.
+    """
+    old = [r[0] for r in conn.execute(
+        "SELECT item_key FROM notice_item WHERE board_url = ?", (board_url,))]
+    conn.execute("DELETE FROM notice_item WHERE board_url = ?", (board_url,))
+    fts = has_notice_fts(conn)
+    if fts and old:
+        conn.executemany("DELETE FROM notice_item_fts WHERE item_key = ?",
+                         [(k,) for k in old])
+    n = 0
+    for it in items:
+        conn.execute(
+            """INSERT INTO notice_item (item_key, url, title, published_at,
+                   category, author, board_url, board_name, host, site_name,
+                   observed_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?)
+               ON CONFLICT(item_key) DO UPDATE SET
+                   title=excluded.title, published_at=excluded.published_at,
+                   observed_at=excluded.observed_at""",
+            (it.key, it.url, it.title, it.published_at, it.category, it.author,
+             board_url, board_name, host, site_name, observed_at))
+        if fts:
+            conn.execute(
+                "INSERT INTO notice_item_fts (item_key, title, board_name) "
+                "VALUES (?,?,?)", (it.key, it.title, board_name))
+        n += 1
+    return n
+
+
+def search_notices(conn: sqlite3.Connection, tokens: Sequence[str], *,
+                   limit: int = 60, host: str | None = None
+                   ) -> list[dict[str, Any]]:
+    """제목에서 찾는다. 최신 글이 먼저다 — 공지는 오래된 것이 덜 쓸모 있다."""
+    if not tokens:
+        return []
+    long_toks = [t for t in tokens if len(t) >= FTS_MIN_CHARS]
+    if long_toks and has_notice_fts(conn):
+        match = " OR ".join(_fts_phrase(t) for t in long_toks)
+        rows = conn.execute(
+            """SELECT n.* FROM notice_item_fts f
+                 JOIN notice_item n ON n.item_key = f.item_key
+                WHERE notice_item_fts MATCH ? AND (? IS NULL OR n.host = ?)
+                ORDER BY n.published_at DESC NULLS LAST
+                LIMIT ?""", (match, host, host, limit)).fetchall()
+        if rows:
+            return [dict(r) for r in rows]
+    clause = " OR ".join(["title LIKE ?"] * len(tokens))
+    args: list[Any] = [f"%{t}%" for t in tokens] + [host, host, limit]
+    rows = conn.execute(
+        f"""SELECT * FROM notice_item
+             WHERE ({clause}) AND (? IS NULL OR host = ?)
+             ORDER BY published_at DESC NULLS LAST LIMIT ?""", args).fetchall()
+    return [dict(r) for r in rows]
+
+
+def rebuild_notice_fts(conn: sqlite3.Connection) -> int:
+    if not has_notice_fts(conn):
+        return 0
+    conn.execute("DELETE FROM notice_item_fts")
+    conn.execute(
+        """INSERT INTO notice_item_fts (item_key, title, board_name)
+           SELECT item_key, title, board_name FROM notice_item""")
+    conn.commit()
+    return conn.execute("SELECT COUNT(*) FROM notice_item_fts").fetchone()[0]

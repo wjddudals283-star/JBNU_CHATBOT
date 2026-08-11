@@ -559,3 +559,50 @@ def render_section(result, *, utterance: str = "") -> dict:
     return kakao.response(
         [kakao.simple_text("\n".join(lines))],
         [kakao.quick_reply("처음으로")])
+
+
+def render_notices(result, *, utterance: str = "") -> dict:
+    """공지 검색 결과.
+
+    ★ 제목·게시일·링크만 보여준다. 본문을 안 읽었으므로 내용을 요약하지 않는다.
+      '이런 공지가 있고 여기서 볼 수 있다' 까지가 우리가 아는 전부다.
+    """
+    from skill.section_search import Outcome
+    subject = result.subject if hasattr(result, "subject") else ""
+    subject = subject or " ".join(result.query_tokens[:3]) or utterance[:20]
+
+    if result.outcome is Outcome.PERSONAL:
+        return render_section(result, utterance=utterance)
+
+    if result.outcome is Outcome.NO_QUERY:
+        return kakao.response(
+            [kakao.simple_text("어떤 공지를 찾으시는지 단어를 넣어 물어봐 주세요.\n"
+                               "예: '장학금 공지', '기숙사 모집'")],
+            [kakao.quick_reply("처음으로")])
+
+    if result.outcome is Outcome.NO_DATA:
+        return kakao.response(
+            [kakao.simple_text(f"'{subject}' 공지를 찾지 못했어요.\n"
+                               f"공지 자료를 아직 가져오지 못했어요.\n\n{SEARCH_HINT}")],
+            [kakao.quick_reply("처음으로")])
+
+    if result.outcome is Outcome.NOT_FOUND:
+        # 조회는 했다. 몇 건을 봤는지 밝힌다.
+        return kakao.response(
+            [kakao.simple_text(
+                f"'{subject}' 가 제목에 든 공지를 찾지 못했어요.\n"
+                f"모아둔 공지 {result.searched_total:,}건을 확인했어요.\n\n"
+                f"제목에 없을 뿐 본문에는 있을 수 있어요.\n{SEARCH_HINT}")],
+            [kakao.quick_reply("처음으로")])
+
+    items = []
+    for h in result.hits[:kakao.MAX_LIST_ITEMS]:
+        where = h.site_name or h.board_name or ""
+        when = h.published_at or "날짜 없음"
+        items.append({"title": h.title,
+                      "description": f"{when} · {where}"[:kakao.LIST_ITEM_DESC],
+                      "link": h.url})
+    card, _ = kakao.list_card(f"'{subject}' 공지", items)
+    return kakao.response(
+        [card, kakao.simple_text("제목만 보고 찾은 거라 자세한 내용은 눌러서 확인해 주세요.")],
+        [kakao.quick_reply("처음으로")])

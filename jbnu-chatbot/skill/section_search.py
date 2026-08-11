@@ -424,3 +424,68 @@ def search(conn, utterance: str, *, repo) -> SearchResult:
 
     result.outcome = Outcome.AMBIGUOUS if cross_site else Outcome.FOUND
     return result
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# 공지 검색 — 제목만 본다. 본문을 안 읽었으니 본문을 아는 척하지 않는다.
+
+@dataclass
+class NoticeHit:
+    title: str
+    url: str
+    published_at: str | None
+    board_name: str
+    site_name: str
+    category: str = ""
+
+
+@dataclass
+class NoticeResult:
+    outcome: Outcome
+    query_tokens: list[str] = field(default_factory=list)
+    hits: list[NoticeHit] = field(default_factory=list)
+    searched_total: int = 0
+    site_name: str = ""
+
+
+MAX_NOTICE_HITS = 5
+
+
+def search_notices(conn, utterance: str, *, repo) -> NoticeResult:
+    """공지 제목 검색.
+
+    ★ 제목이 맞으면 보여준다. 본문은 읽지 않았으므로 '무슨 내용이다' 라고
+      말하지 않는다. '이런 공지가 있고 여기서 볼 수 있다' 까지가 정직한 답이다.
+    """
+    if is_personal_lookup(utterance):
+        return NoticeResult(Outcome.PERSONAL)
+    tokens = tokenize(utterance)
+    if not tokens:
+        return NoticeResult(Outcome.NO_QUERY)
+
+    total = repo.notice_total(conn)
+    if total == 0:
+        return NoticeResult(Outcome.NO_DATA, query_tokens=tokens)
+
+    site_host, site_label = match_site(utterance)
+    if site_host:
+        used = {a for a, h in site_aliases().items() if h == site_host}
+        used |= {site_label}
+        narrowed = [t for t in tokens if not any(u and u in t for u in used)]
+        if narrowed:
+            tokens = narrowed
+
+    rows = repo.search_notices(conn, tokens, host=site_host)
+    # 제목에 질문의 말이 실제로 들어 있는 것만 남긴다.
+    # 색인이 느슨하게 걸어준 것을 그대로 믿지 않는다.
+    hits = [NoticeHit(title=r["title"], url=r["url"],
+                      published_at=r["published_at"],
+                      board_name=r["board_name"] or "",
+                      site_name=r["site_name"] or "",
+                      category=r["category"] or "")
+            for r in rows if any(t in r["title"] for t in tokens)]
+    res = NoticeResult(Outcome.NOT_FOUND if not hits else Outcome.FOUND,
+                       query_tokens=tokens, searched_total=total,
+                       site_name=site_label)
+    res.hits = hits[:MAX_NOTICE_HITS]
+    return res
