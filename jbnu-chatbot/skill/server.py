@@ -500,6 +500,21 @@ def _handle_section(db_path: pathlib.Path, utterance: str, *,
             #   등급으로는 원리상 안 잡힌다. 등급은 '얼마나 정확한 답인가' 를 재고
             #   되묻기가 주는 건 '학생이 원한 답인가' 다. 다른 축이다.
             log.info("[clarify] 선택 label=%r", chosen)
+            # ★ 고른 제목의 블록을 그대로 준다 — 검색을 한 번 더 돌리지 않는다.
+            #   최상위 블록은 is_leaf=0 이라 색인에 없다. 순위로는 영영 못 올라온다.
+            #   학생이 우리가 보여준 제목을 고른 것이므로 추론이 없다.
+            _c2 = repo.connect(db_path, readonly=True)
+            try:
+                blk = clarify.exact_block(_c2, result.top.page_url, utterance)
+            finally:
+                _c2.close()
+            if blk:
+                log.info("[clarify] 제목 일치 블록 %s자", len(blk["text"]))
+                where = " · ".join(x for x in (result.top.site_name,
+                                               result.top.page_title) if x)
+                return templates.render_chosen(
+                    blk["path"].split(">")[-1].strip(), blk["text"],
+                    where=where, page_url=result.top.page_url)
         elif opts:
             log.info("[clarify] 발동 q=%r opts=%s", utterance[:30], opts)
             where = " · ".join(x for x in (result.top.site_name,

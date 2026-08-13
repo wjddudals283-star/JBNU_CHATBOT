@@ -218,3 +218,48 @@ def test_학과가_하나면_학과의존이_아니다():
     """
     from skill import section_search as ss
     assert "dept_hosts" in ss.__dict__ or True   # 구현 세부는 안 묶는다
+
+
+# ── 2턴 (학생이 고른 뒤) ──────────────────────────────────────
+def test_고른_제목의_블록을_그대로_준다(conn):
+    """★ 순위 문제가 아니라 색인 문제였다.
+
+    학생이 '일반 휴학' 을 골랐는데 '휴학 절차 > 휴학일자 입력 방법' 표가 나왔다.
+    같은 페이지에 '일반 휴학' 블록이 있는데도 그랬다 —
+    검색은 is_leaf=1 인 잎만 색인하고 최상위 블록은 is_leaf=0 이라
+    애초에 후보에 없다. 11개 선택지 전부에서 그랬다.
+    """
+    blk = clarify.exact_block(conn, PAGE, "일반 휴학")
+    assert blk is not None and blk["path"] == "일반 휴학"
+
+
+def test_띄어쓰기가_달라도_찾는다(conn):
+    assert clarify.exact_block(conn, PAGE, "일반휴학") is not None
+    assert clarify.exact_block(conn, PAGE, " 일반 휴학 ") is not None
+
+
+def test_제목이_아니면_안_준다(conn):
+    """부분 일치로 아무 블록이나 주면 그건 추론이다."""
+    assert clarify.exact_block(conn, PAGE, "휴학") is None
+    assert clarify.exact_block(conn, PAGE, "일반") is None
+
+
+def test_2턴_문안에는_사과가_없다():
+    """★ 학생이 방금 골라준 건데 못 집었다고 하면 되묻기를 왜 했는지가 사라진다.
+
+        1턴 (우리가 찍음)  "어느 부분인지 딱 집지는 못했어요"   ← 맞는 말
+        2턴 (학생이 고름)   "'일반 휴학'에 대한 안내예요"       ← 사과 빼기
+    """
+    from skill import templates
+    out = templates.render_chosen("일반 휴학", "휴학시기 등록자 : 수업일수 3/4선 이내",
+                                  where="본부 · 휴학/복학", page_url="https://x")
+    t = out["template"]["outputs"][0]["simpleText"]["text"]
+    assert "'일반 휴학'에 대한 안내예요" in t
+    assert "못했어요" not in t and "못 집" not in t
+
+
+def test_2턴_인용도_카카오_상한을_안_넘는다():
+    from skill import kakao, templates
+    out = templates.render_chosen("휴학 절차", "가" * 3000,
+                                  where="본부", page_url="https://x")
+    assert kakao.validate(out) == []

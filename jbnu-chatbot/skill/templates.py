@@ -511,6 +511,33 @@ def render_attribute_hint(subject: str, attribute: str, *,
                           [kakao.quick_reply("처음으로")])
 
 
+def render_chosen(label: str, text: str, *, where: str, page_url: str) -> dict:
+    """2턴 — 학생이 고른 것을 준다. **사과하지 않는다.**
+
+    ★ 1턴과 2턴은 다른 문장을 써야 한다
+        1턴 (우리가 찍음)  "어느 부분인지 딱 집지는 못했어요"   ← 맞는 말이다
+        2턴 (학생이 고름)   "'일반 휴학'에 대한 안내예요"       ← 사과가 들어가면 안 된다
+      학생이 방금 골라준 건데 못 집었다고 하면 되묻기를 왜 했는지가 사라진다.
+    """
+    body, clipped = (text, False)
+    if len(body) > QUOTE_BUDGET:
+        cut = body[:QUOTE_BUDGET]
+        for sep in ("\n", ". ", "다. ", "요. "):
+            i = cut.rfind(sep)
+            if i > QUOTE_BUDGET * 0.5:
+                cut = cut[:i + len(sep)]
+                break
+        body, clipped = cut.rstrip(), True
+
+    lines = [f"'{label}'에 대한 안내예요.", "", f"📄 {where}", "", body]
+    if clipped:
+        lines += ["", "(내용이 길어 일부만 옮겼어요. 전체는 아래에서 확인해 주세요)"]
+    return kakao.response(
+        [kakao.simple_text("\n".join(x for x in lines if x is not None).strip())],
+        [kakao.quick_reply("처음으로")],
+    )
+
+
 def render_clarify(subject: str, options: list[str], *, where: str,
                    page_url: str = "") -> dict:
     """되묻기 — 문서가 갈라 놓은 대로 물어본다.

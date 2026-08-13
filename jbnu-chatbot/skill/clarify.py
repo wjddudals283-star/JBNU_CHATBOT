@@ -78,6 +78,34 @@ def options(conn, page_url: str, tokens: list[str]) -> list[str]:
     return out if len(out) >= MIN_OPTIONS else []
 
 
+def exact_block(conn, page_url: str, utterance: str) -> dict | None:
+    """제목이 정확히 일치하는 최상위 블록.
+
+    ★ 순위 문제가 아니라 **색인 문제**였다
+      학생이 '일반 휴학' 을 골랐는데 '휴학 절차 > 휴학일자 입력 방법' 표가 나왔다.
+      같은 페이지에 '일반 휴학' 123자 블록이 있는데도 그랬다.
+      재보니 11개 선택지 전부에서 제목 일치 블록이 **순위 밖**이었다 —
+      검색은 is_leaf=1 인 잎만 색인하고 최상위 블록은 is_leaf=0 이라
+      애초에 후보에 없었다. 순위를 고쳐서 될 일이 아니다.
+
+    ★ 이건 랭킹 우회가 아니라 **다른 질문**이다
+      '휴학' 은 찾아 달라는 말이고, '일반 휴학' 은 그 제목의 것을 달라는 말이다.
+      학생이 우리가 보여준 제목을 그대로 고른 것이므로 추론이 없다.
+      확신 오답이 날 수 없다 — 우리가 고른 게 아니라 학생이 고른 제목이다.
+    """
+    want = _norm(utterance)
+    if not want:
+        return None
+    for r in conn.execute(
+            """SELECT section_key, path, raw_text, text FROM page_section
+                WHERE page_url = ? AND parent_key IS NULL ORDER BY ordinal""",
+            (page_url,)):
+        if _norm((r["path"] or "").split(">")[-1]) == want:
+            return {"section_key": r["section_key"], "path": r["path"] or "",
+                    "text": (r["raw_text"] or r["text"] or "").strip()}
+    return None
+
+
 def already_narrowed(utterance: str, labels: list[str],
                      tokens: list[str] | None = None) -> str | None:
     """질문에 이미 한정어가 있나. 있으면 되묻지 않는다.
