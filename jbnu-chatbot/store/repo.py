@@ -1029,6 +1029,37 @@ def coverage_summary(conn: sqlite3.Connection) -> dict[str, Any]:
     }
 
 
+def term_occurrences(conn: sqlite3.Connection, term: str, *,
+                     top_hosts: int = 8) -> dict:
+    """이 낱말이 코퍼스에 몇 번 나오나. 어느 호스트에 몰려 있나.
+
+    ★ 왜 필요한가 (2026-08-13 혼선)
+      학교가 OASIS → JUMP 로 갈아탔을 때 우리 사본이 낡았다고 봤는데,
+      **그건 로컬 사본 숫자였다.** 서버는 이미 최신이었다.
+      서버 상태를 볼 방법이 로그밖에 없어서 하루를 잘못 진단했다.
+
+      '로컬 숫자를 서버 상태로 말하지 않는다' 고 적어 놓고
+      정작 그 경고를 이 건에 적용하지 못했다. 볼 수단이 없으면 규율은 안 지켜진다.
+    """
+    like = f"%{term}%"
+    sec, pages = conn.execute(
+        """SELECT COUNT(*), COUNT(DISTINCT page_url) FROM page_section
+            WHERE text LIKE ?""", (like,)).fetchone()
+    hosts = [{"host": h, "sections": n} for h, n in conn.execute(
+        """SELECT r.host, COUNT(*) FROM page_section s
+             JOIN page_registry r ON r.page_url = s.page_url
+            WHERE s.text LIKE ? GROUP BY r.host
+            ORDER BY 2 DESC LIMIT ?""", (like, top_hosts))]
+    titles = [{"title": t or "", "host": h, "observed": (o or "")[:16]}
+              for t, h, o in conn.execute(
+        """SELECT r.title, r.host, r.last_attempt_at FROM page_registry r
+            WHERE r.page_url IN (SELECT DISTINCT page_url FROM page_section
+                                  WHERE text LIKE ?)
+            ORDER BY r.host LIMIT 20""", (like,))]
+    return {"term": term, "sections": sec, "pages": pages,
+            "by_host": hosts, "sample_pages": titles}
+
+
 def coverage_gaps(conn: sqlite3.Connection, *, limit: int = 50) -> list[dict]:
     """답할 수 없는 페이지 목록. 왜 못 하는지까지 같이 준다."""
     rows = conn.execute(

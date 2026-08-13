@@ -305,6 +305,27 @@ def create_app(db_path: pathlib.Path | None = None, *,
                 "by_domain": by_domain, "status_meaning": meaning,
                 "gaps": gaps}
 
+    # ★ 서버 코퍼스에 그 낱말이 몇 번 나오나.
+    #
+    #   2026-08-13: 학교가 OASIS → JUMP 로 갈아탔을 때 우리 사본이 낡았다고 봤는데
+    #   그건 **로컬 사본 숫자**였다. 서버는 이미 최신이었고, 확인할 방법이
+    #   로그밖에 없어서 하루를 잘못 진단했다.
+    #   '로컬 숫자를 서버 상태로 말하지 않는다' 고 적어 놓고도 그랬다 —
+    #   **볼 수단이 없으면 규율은 안 지켜진다.**
+    @app.get("/admin/terms", dependencies=[Depends(auth.require_token)])
+    def terms(q: str = "", hosts: int = 8) -> dict:
+        """?q=OASIS,JUMP — 쉼표로 여러 낱말. 최대 5개."""
+        words = [w.strip() for w in (q or "").split(",") if w.strip()][:5]
+        if not words:
+            return {"error": "q 가 필요하다. 예: /admin/terms?q=OASIS,JUMP"}
+        c = repo.connect(app.state.db_path, readonly=True)
+        try:
+            return {"observed_at": now_kst().isoformat(),
+                    "results": [repo.term_occurrences(c, w, top_hosts=hosts)
+                                for w in words]}
+        finally:
+            c.close()
+
     # ★ 총학이 직접 넣은 답의 상태. 만료·미확인을 여기서 본다.
     #   만료된 뒤에 아는 것은 늦으므로 30일 전에 미리 알린다.
     @app.get("/admin/manual", dependencies=[Depends(auth.require_token)])
