@@ -514,14 +514,16 @@ def _handle_section(db_path: pathlib.Path, utterance: str, *,
                                                result.top.page_title) if x)
                 return templates.render_chosen(
                     blk["path"].split(">")[-1].strip(), blk["text"],
-                    where=where, page_url=result.top.page_url)
+                    where=where, page_url=result.top.page_url,
+                    observed=templates.observed_label(result.top.observed_at))
         elif opts:
             log.info("[clarify] 발동 q=%r opts=%s", utterance[:30], opts)
             where = " · ".join(x for x in (result.top.site_name,
                                            result.top.page_title) if x)
             return templates.render_clarify(
                 result.subject or utterance, opts, where=where,
-                page_url=result.top.page_url)
+                page_url=result.top.page_url,
+                observed=templates.observed_label(result.top.observed_at))
 
     return templates.render_section(result, utterance=utterance)
 

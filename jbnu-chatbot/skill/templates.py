@@ -493,14 +493,39 @@ def _quote_block(hit) -> tuple[str, bool]:
     return cut.rstrip(), True
 
 
+def stamp_line(where: str, when: str, *, page_modified: str = "") -> str:
+    """출처 한 줄. **언제 본 것인지 반드시 붙인다.**
+
+    ★ 이게 없어서 낡은 답을 낡은 줄 모르고 내보냈다
+      학교가 OASIS → JUMP 로 갈아탔는데 우리 사본은 그 전 것이었고,
+      학생은 그 답이 언제 것인지 알 방법이 없었다.
+      우리는 원문이 바뀌는 걸 막을 수 없다. 막을 수 있는 건
+      **언제 본 것인지 숨기는 것**이다.
+
+    ★ 우리 관측을 앞에, 학교 표기를 뒤에 — 둘 다 보여준다
+      학교의 last_modified 는 2.7% 만 채워져 있고, JUMP 전환 때는
+      '2025-01-09' 그대로였다. 그걸 우리 관측처럼 내보내면 안 본 것을 말하는 것이다.
+      그렇다고 버릴 것도 아니다. 최근 값이면 학생에게 쓸모가 있고,
+      **둘이 어긋나면 그 자체가 정보다** — 학교가 안 갱신했다는 신호다.
+    """
+    bits = [x for x in (when, f"학교 표기 {page_modified}" if page_modified else "")
+            if x]
+    return f"📄 {where}" + (f" ({' · '.join(bits)})" if bits else "")
+
+
 def _source_line(hit) -> str:
-    when = hit.page_modified or observed_label(hit.observed_at)
+    # ★ 학교가 말한 수정일보다 **우리가 본 시각**을 쓴다
+    #   OASIS → JUMP 전환 때 학교의 last_modified 는 '2025-01-09' 그대로였다.
+    #   페이지는 바뀌었는데 그 값은 안 바뀐다 — 2.7% 만 채워져 있고
+    #   채워진 것도 못 믿는다. 우리가 보증할 수 있는 건 '우리가 언제 봤나' 뿐이다.
+    #   학교 주장을 우리 관측처럼 내보내면 그건 우리가 안 본 것을 말하는 것이다.
+    when = observed_label(hit.observed_at)
     page = hit.page_title or "전북대 홈페이지"
     # 어느 학과 문서인지 밝힌다. 205개 사이트가 붙은 뒤로는
     # 페이지 제목만으로 '내 학과 얘기인가' 를 판단할 수 없다.
     site = getattr(hit, "site_name", "")
     where = f"{site} · {page}" if site and site not in page else page
-    return f"📄 {where}" + (f" ({when} 기준)" if when else "")
+    return stamp_line(where, when, page_modified=hit.page_modified or "")
 
 
 def render_attribute_hint(subject: str, attribute: str, *,
@@ -531,7 +556,8 @@ def render_attribute_hint(subject: str, attribute: str, *,
                           [kakao.quick_reply("처음으로")])
 
 
-def render_chosen(label: str, text: str, *, where: str, page_url: str) -> dict:
+def render_chosen(label: str, text: str, *, where: str, page_url: str,
+                  observed: str = "") -> dict:
     """2턴 — 학생이 고른 것을 준다. **사과하지 않는다.**
 
     ★ 1턴과 2턴은 다른 문장을 써야 한다
@@ -549,7 +575,8 @@ def render_chosen(label: str, text: str, *, where: str, page_url: str) -> dict:
                 break
         body, clipped = cut.rstrip(), True
 
-    lines = [f"'{label}'에 대한 안내예요.", "", f"📄 {where}", "", body]
+    lines = [f"'{label}'에 대한 안내예요.", "",
+             stamp_line(where, observed), "", body]
     if clipped:
         lines += ["", "(내용이 길어 일부만 옮겼어요. 전체는 아래에서 확인해 주세요)"]
     return kakao.response(
@@ -559,7 +586,7 @@ def render_chosen(label: str, text: str, *, where: str, page_url: str) -> dict:
 
 
 def render_clarify(subject: str, options: list[str], *, where: str,
-                   page_url: str = "") -> dict:
+                   page_url: str = "", observed: str = "") -> dict:
     """되묻기 — 문서가 갈라 놓은 대로 물어본다.
 
     ★ 선택지를 지어내지 않는다
@@ -574,7 +601,7 @@ def render_clarify(subject: str, options: list[str], *, where: str,
     lines = [f"'{subject}'{J(subject, '은/는')} 여러 갈래로 나뉘어 있어요.",
              "어느 쪽인지 골라 주시면 그 부분을 보여드릴게요.", ""]
     if where:
-        lines.append(f"📄 {where}")
+        lines.append(stamp_line(where, observed))
     replies = [kakao.quick_reply(kakao._clip(o, kakao.MAX_BTN_LABEL_V), o)
                for o in options[:kakao.MAX_QUICK_REPLIES]]
     return kakao.response([kakao.simple_text("\n".join(lines).strip())], replies)
@@ -659,8 +686,12 @@ def render_section(result, *, utterance: str = "") -> dict:
     if getattr(result, "page_level", False):
         where = f"{hit.site_name} · {hit.page_title}" if hit.site_name else hit.page_title
         head, _ = _quote_block(hit)
+        # ★ 페이지 단위 답에도 관측 시각을 붙인다.
+        #   여기가 19/46 이 지나가는 길인데 여태 시각이 없었다 —
+        #   OASIS → JUMP 처럼 원문이 바뀌면 학생이 알 방법이 없다.
         lines = [f"'{subject}'{J(subject, '은/는')} 이 문서에 있어요.",
-                 "", f"📄 {where}"]
+                 "", stamp_line(where, observed_label(hit.observed_at),
+                                page_modified=hit.page_modified or "")]
         via = getattr(result, "via_synonym", "")
         if via:
             lines.append(f"('{via}'라는 이름으로 올라와 있어요)")

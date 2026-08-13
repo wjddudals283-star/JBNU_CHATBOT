@@ -277,3 +277,34 @@ def test_라벨이_길다고_선택지에서_빼지_않는다():
     **보내는 말은 안 줄이므로** 길어도 검색은 온전하다.
     """
     assert clarify.MAX_LABEL >= 34
+
+
+def test_출처에_우리가_본_시각을_붙인다():
+    """★ 원문이 바뀐 걸 우리가 막을 수는 없다. 막을 수 있는 건 언제 본 건지 숨기는 것이다.
+
+    학교가 OASIS → JUMP 로 갈아탔는데 우리 사본은 그 전 것이었고,
+    답변에 시각이 없어 학생이 알 방법이 없었다.
+    """
+    from skill import templates
+    assert templates.stamp_line("본부 · 자퇴", "8/11 13:28 확인") \
+        == "📄 본부 · 자퇴 (8/11 13:28 확인 기준)"
+    assert templates.stamp_line("본부 · 자퇴", "") == "📄 본부 · 자퇴"
+
+
+def test_학교가_말한_수정일보다_우리_관측이_먼저다():
+    """★ 학교 last_modified 는 못 믿는다.
+
+    JUMP 전환 뒤에도 '2025-01-09' 그대로였다. 2.7% 만 채워져 있고
+    채워진 것도 안 바뀐다. 우리가 보증할 수 있는 건 '우리가 언제 봤나' 뿐이다.
+    """
+    from skill import templates
+
+    class _H:
+        page_modified = "2025-01-09"
+        observed_at = "2026-08-11T13:28:22+09:00"
+        page_title = "자퇴 / 제적"
+        site_name = "전북대학교 본부"
+
+    line = templates._source_line(_H())
+    assert line.index("8/11") < line.index("2025-01-09")   # 우리 관측이 앞
+    assert "학교 표기 2025-01-09" in line                   # 버리지도 않는다
