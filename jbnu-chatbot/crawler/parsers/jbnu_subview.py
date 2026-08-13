@@ -221,12 +221,65 @@ def _row_cells(row) -> list[str]:
             if c.tag in ("td", "th")]
 
 
+# 병합 칸수 상한. colspan="99" 같은 표기가 실제로 있어서 그대로 펴면 폭발한다.
+MAX_SPAN = 20
+
+
+def _span(cell, name: str) -> int:
+    try:
+        v = int((cell.attributes.get(name) or "1").strip() or "1")
+    except (ValueError, AttributeError):
+        return 1
+    return max(1, min(v, MAX_SPAN))
+
+
 def _table_rows(table) -> list[list[str]]:
-    rows = []
+    """병합 셀(colspan·rowspan)을 펴서 행마다 칸 수를 맞춘다.
+
+    ★ 안 펴면 머리글과 값이 어긋난다
+      실측: 표 3,024개 중 46.6% 가 행마다 칸 수가 다르고,
+      **학과 졸업요건 페이지는 75.8%** 다 — 형식 안내가 학생을 보내는 바로 그 자리다.
+
+          8칸  적용년도 | 학과 | 교양(42이상) | … | 계
+          2칸  전필 | 전선                        ← 병합으로 비어 있던 자리
+          9칸  2010년이후입학자 | 사학 | 최소이수학점29-42 | …
+
+      학생은 '최소이수학점29-42' 가 어느 열인지 알 수 없다.
+      '졸업요건은 학과마다 달라요 → 사학과 졸업요건' 이라고 보내 놓고
+      도착지를 못 읽게 하는 것이다.
+
+    ★ 병합된 값을 **반복해서 채운다**. 빈칸으로 두지 않는다.
+      빈칸이면 칸수는 맞아도 그 열이 무엇인지 여전히 모른다.
+      원문을 바꾸는 게 아니라 원문이 화면에서 표현하던 것을 글로 편 것이다.
+    """
+    rows: list[list[str]] = []
+    carry: dict[int, tuple[str, int]] = {}   # 열 → (값, 남은 행수)
     for tr in table.css("tr"):
-        cells = _row_cells(tr)
-        if any(c for c in cells):
-            rows.append(cells)
+        cells = [c for c in tr.iter(include_text=False)
+                 if c.tag in ("td", "th")]
+        row: list[str] = []
+        nxt: dict[int, tuple[str, int]] = {}
+        col = ci = 0
+        while ci < len(cells) or col in carry:
+            if col in carry:                  # 위에서 rowspan 으로 내려온 자리
+                text, left = carry[col]
+                row.append(text)
+                if left > 1:
+                    nxt[col] = (text, left - 1)
+                col += 1
+                continue
+            cell = cells[ci]
+            ci += 1
+            text = _norm(cell.text())
+            rs = _span(cell, "rowspan")
+            for _ in range(_span(cell, "colspan")):
+                row.append(text)
+                if rs > 1:
+                    nxt[col] = (text, rs - 1)
+                col += 1
+        carry = nxt
+        if any(row):
+            rows.append(row)
     return rows
 
 
