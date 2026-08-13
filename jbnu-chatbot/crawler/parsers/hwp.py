@@ -101,11 +101,44 @@ def _para_text(payload: bytes) -> str:
     return "".join(out)
 
 
+def _extract_hwpx(data: bytes) -> list[str]:
+    """HWPX — 한글 2010+ 의 XML 형식. zip 안에 Contents/section*.xml 이 있다.
+
+    ★ 드물지만 하필 필요한 곳에 있었다
+      규정 607개 중 표본 40개는 전부 HWP(OLE) 였는데
+      '성적 평가 지침' 하나가 HWPX 였다. 재수강 규정이 있을 자리다.
+      드물다고 안 만들면, 드문 것이 정확히 필요한 것일 때 막힌다.
+    """
+    import xml.etree.ElementTree as ET
+    import zipfile
+    out: list[str] = []
+    with zipfile.ZipFile(io.BytesIO(data)) as z:
+        names = sorted(n for n in z.namelist()
+                       if re.match(r"Contents/section\d+\.xml$", n))
+        if not names:
+            raise NotHwp("HWPX 인데 Contents/section*.xml 이 없다")
+        for name in names:
+            root = ET.fromstring(z.read(name))
+            for para in root.iter():
+                tag = para.tag.rsplit("}", 1)[-1]
+                if tag != "p":
+                    continue
+                # 한 문단 안의 텍스트 조각을 순서대로 잇는다
+                bits = [t.text or "" for t in para.iter()
+                        if t.tag.rsplit("}", 1)[-1] == "t"]
+                line = re.sub(r"[ \t]+", " ", "".join(bits)).strip()
+                if line:
+                    out.append(line)
+    return out
+
+
 def extract(data: bytes) -> list[str]:
-    """HWP 바이트 → 문단 목록. 원문 그대로, 순서 그대로."""
+    """HWP/HWPX 바이트 → 문단 목록. 원문 그대로, 순서 그대로."""
     import olefile
+    if data[:2] == b"PK":
+        return _extract_hwpx(data)
     if not data[:8] == b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1":
-        raise NotHwp("OLE 복합문서가 아니다 (HWP 5.0 이 아닐 수 있다)")
+        raise NotHwp("OLE 복합문서도 zip 도 아니다 (HWP/HWPX 가 아닐 수 있다)")
     ole = olefile.OleFileIO(io.BytesIO(data))
     try:
         head = ole.openstream("FileHeader").read(len(HWP_SIGNATURE))

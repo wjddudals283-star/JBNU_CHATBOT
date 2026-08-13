@@ -91,3 +91,33 @@ def test_실제_학칙이_있으면_조문이_나온다(tmp_path):
         pytest.skip("hwp 표본 없음")
     arts = hwp.articles(hwp.extract(cand[0].read_bytes()))
     assert arts, "조문을 하나도 못 뽑았다"
+
+
+def test_HWPX_도_연다(tmp_path):
+    """★ 드물지만 하필 필요한 곳에 있었다.
+
+    규정 607개 표본 40개는 전부 HWP(OLE) 였는데 '성적 평가 지침' 하나가 HWPX 였다.
+    재수강 규정이 있을 자리다. 드물다고 안 만들면
+    드문 것이 정확히 필요한 것일 때 막힌다.
+    """
+    import zipfile
+    p = tmp_path / "x.hwpx"
+    xml = ('<?xml version="1.0"?><hs:sec xmlns:hs="h" xmlns:hp="p">'
+           '<hp:p><hp:run><hp:t>제1조(목적)</hp:t></hp:run>'
+           '<hp:run><hp:t> 이 지침은…</hp:t></hp:run></hp:p>'
+           '<hp:p><hp:run><hp:t>② 둘째 항</hp:t></hp:run></hp:p></hs:sec>')
+    with zipfile.ZipFile(p, "w") as z:
+        z.writestr("Contents/section0.xml", xml)
+    paras = hwp.extract(p.read_bytes())
+    # 한 문단 안의 조각은 **이어 붙인다** — 나누면 조문이 쪼개진다
+    assert paras == ["제1조(목적) 이 지침은…", "② 둘째 항"]
+    assert hwp.articles(paras)[0][1] == ["② 둘째 항"]
+
+
+def test_zip_인데_HWPX_가_아니면_말한다(tmp_path):
+    import zipfile
+    p = tmp_path / "n.zip"
+    with zipfile.ZipFile(p, "w") as z:
+        z.writestr("hello.txt", "not hwpx")
+    with pytest.raises(hwp.NotHwp):
+        hwp.extract(p.read_bytes())
