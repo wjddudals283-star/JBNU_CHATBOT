@@ -91,9 +91,19 @@ def main(argv: list[str] | None = None) -> int:
             fired += 1
 
             # 2턴 — 버튼을 눌렀다고 치고 라벨을 그대로 발화로 보낸다
+            # ★ 서버와 **같은 경로**로 잰다. 재는 자가 실제 경로와 다르면
+            #   측정이 거짓말을 한다. 서버는 이제 검색이 아니라
+            #   clarify.exact_block 으로 그 제목의 블록을 바로 집는다.
             best = None
             best_v = ""
             for label in opts:
+                blk = clarify.exact_block(conn, r.top.page_url, label)
+                if blk is not None:
+                    # 섹션을 정확히 짚었다. must 가 그 안에 있으면 확신이다.
+                    if (not m) or m in blk["text"]:
+                        best, best_v = label, SURE
+                        break
+                    continue
                 r2 = ss.search(conn, label, repo=repo)
                 v2, _ = judge(label, expect, m, r2)
                 if v2 in TURN2_OK:
@@ -120,6 +130,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  답없음 {len(no_answer):3}  되물었는데 선택지에 답이 없다")
         for q, opts in no_answer:
             print(f"        {q:16} {' · '.join(opts[:4])}")
+        up = [x for x in recovered if x[2].endswith("[확신]")]
+        print(f"  ★ 그중 등급이 실제로 오른 것 {len(up)}건 "
+              f"(문서+발췌 → 확신)")
         net = len(recovered) - len(regressed)
         print()
         print(f"★ 순효과 {net:+d}건   (회수 {len(recovered)} − 후퇴 {len(regressed)})")
