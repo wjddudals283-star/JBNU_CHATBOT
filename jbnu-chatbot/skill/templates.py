@@ -23,6 +23,10 @@ from skill.branch import Branch, MealAnswer
 
 MEAL_KO = {"breakfast": "아침", "lunch": "점심", "dinner": "저녁"}
 
+# 학사일정을 넓혀 볼 수 있는 최대 폭. 버튼 문구와 서버의 상한이 **같은 수**여야
+# 한다 — 다르면 버튼이 못 지킬 약속을 하게 된다.
+MAX_UPCOMING_DAYS = 90
+
 
 def observed_label(iso: str | None) -> str:
     if not iso:
@@ -36,9 +40,22 @@ def date_label(date: str) -> str:
     return f"{d.month}/{d.day}"
 
 
+def _next_day_button(facility_name: str, meal_ko: str, date: str,
+                     today: str | None) -> dict:
+    """'내일 메뉴' — **오늘을 보고 있을 때만** 그렇게 부른다.
+
+    ★ 이미 내일을 보여주면서 '내일 메뉴' 를 또 붙이고 있었다 (2026-08-14)
+      누르면 같은 날짜가 다시 나온다. 자기 자신으로 돌아오는 버튼이다.
+      날짜를 모르면(today=None) 상대어를 안 쓴다 — 틀린 이름을 붙이느니 안 붙인다.
+    """
+    if today and date == today:
+        return kakao.quick_reply("내일 메뉴", f"{facility_name} 내일 {meal_ko}")
+    return kakao.quick_reply("오늘 메뉴", f"{facility_name} 오늘 {meal_ko}")
+
+
 def render_meal(answer: MealAnswer, *, facility_name: str, date: str,
                 meal_type: str, source_url: str, price_url: str | None = None,
-                contact: str | None = None,
+                contact: str | None = None, today: str | None = None,
                 has_price_table: bool = False) -> dict:
     """식단 질문 하나 → 카카오 응답. 분기별로 문장이 완전히 다르다."""
     meal_ko = MEAL_KO.get(meal_type, meal_type)
@@ -47,14 +64,15 @@ def render_meal(answer: MealAnswer, *, facility_name: str, date: str,
     if answer.branch is Branch.A:
         return _render_a(answer, facility_name=facility_name, dl=dl,
                          meal_ko=meal_ko, source_url=source_url,
-                         price_url=price_url, has_price_table=has_price_table)
+                         price_url=price_url, has_price_table=has_price_table,
+                         date=date, today=today)
     if answer.branch is Branch.B:
         return _render_b(answer, facility_name=facility_name, dl=dl,
                          meal_ko=meal_ko, source_url=source_url,
                          date=date, meal_type=meal_type)
     if answer.branch is Branch.C1:
         return _render_c1(facility_name=facility_name, dl=dl, meal_ko=meal_ko,
-                          source_url=source_url)
+                          source_url=source_url, date=date, today=today)
     return _render_c2(answer, facility_name=facility_name, dl=dl,
                       meal_ko=meal_ko, source_url=source_url, contact=contact)
 
@@ -62,7 +80,8 @@ def render_meal(answer: MealAnswer, *, facility_name: str, date: str,
 # ── A. 사실 있음 + 신선함 ────────────────────────────────────────
 
 def _render_a(answer: MealAnswer, *, facility_name: str, dl: str, meal_ko: str,
-              source_url: str, price_url: str | None,
+              source_url: str, price_url: str | None, date: str,
+              today: str | None = None,
               has_price_table: bool = False) -> dict:
     # ── description 은 **행끼리 구별될 때만** 넣는다 ──
     #   같은 값이 4줄 반복되면 정보량이 0이다. 전 행이 같은 값이면
@@ -109,7 +128,7 @@ def _render_a(answer: MealAnswer, *, facility_name: str, dl: str, meal_ko: str,
         overflow_button=overflow,
     )
 
-    qr = [kakao.quick_reply("내일 메뉴", f"{facility_name} 내일 {meal_ko}"),
+    qr = [_next_day_button(facility_name, meal_ko, date, today),
           kakao.quick_reply("운영시간", f"{facility_name} 몇 시까지 해")]
     if price_url and unpriced:
         qr.append(kakao.quick_reply("가격표", f"{facility_name} 가격"))
@@ -229,13 +248,14 @@ def _render_b(answer: MealAnswer, *, facility_name: str, dl: str, meal_ko: str,
 
 # ── C-1. 운영은 하는데 메뉴가 아직 없음 ──────────────────────────
 
-def _render_c1(*, facility_name: str, dl: str, meal_ko: str, source_url: str) -> dict:
+def _render_c1(*, facility_name: str, dl: str, meal_ko: str, source_url: str,
+               date: str, today: str | None = None) -> dict:
     text = (f"{facility_name} {dl} {meal_ko} 메뉴가 아직 올라오지 않았어요.\n\n"
             f"운영은 하는 날이니 조금 뒤에 다시 확인해 주세요.\n"
             f"{source_url}")
     return kakao.response(
         [kakao.simple_text(text)],
-        [kakao.quick_reply("내일 메뉴", f"{facility_name} 내일 {meal_ko}"),
+        [_next_day_button(facility_name, meal_ko, date, today),
          kakao.quick_reply("다른 식당", "학식 어디 열어")],
     )
 
@@ -262,6 +282,72 @@ def _render_c2(answer: MealAnswer, *, facility_name: str, dl: str, meal_ko: str,
 
 
 # ── 폴백 ────────────────────────────────────────────────────────
+
+def render_meal_ask(names: list[str], *, date: str) -> dict:
+    """어느 식당인지 되묻는다.
+
+    ★ 시각으로 끼니를 고르지 않는 것과 같은 이유다
+      학생이 '학식' 이라고만 했으면 우리가 고를 근거가 없다.
+      네 식당의 세 끼니를 한 화면에 쏟으면 읽을 수가 없고,
+      하나를 골라 주면 그건 우리가 학생 의도를 추측한 것이다.
+      되묻기는 문서가 갈라 놓은 대로 묻는 것이고, 식당은 실제로 갈라져 있다.
+    """
+    text = (f"{date_label(date)} 학식이에요.\n"
+            "어느 식당을 볼까요?")
+    return kakao.response(
+        [kakao.simple_text(text)],
+        [kakao.quick_reply(n, f"{n} 학식") for n in names[:kakao.MAX_QUICK_REPLIES]])
+
+
+def render_meal_day(name: str, answers: list, *, date: str,
+                    source_url: str) -> dict:
+    """한 식당의 **세 끼니 전부**.
+
+    ★ 학생이 '오늘' 을 물었는데 '아침' 만 답하고 있었다
+      시각으로 끼니를 하나 고르고 있었다 — 새벽에 물으면 조식만 나갔다.
+      그런데 그날 점심에는 세 식당 다 메뉴가 있었다. 있는 답을 안 보여준 것이다.
+      시각으로 고르는 건 **우리가 학생 의도를 추측하는 것**이다.
+
+    ★ 끼니마다 근거를 갈라 말한다
+      원천이 '운영없음' 이라고 적어 놓은 것과 칸이 비어 있는 것은 다르다.
+      전자는 관측된 휴무고 후자는 아직 안 올라온 것이다.
+      한 문장으로 뭉개면 없는 사실을 만들어낸다.
+    """
+    lines = [f"{name} · {date_label(date)}", ""]
+    truncated: list[str] = []      # 잘린 끼니 — 갈 길을 열어준다
+    for meal_type, a in answers:
+        ko = MEAL_KO.get(meal_type, meal_type)
+        if a.branch is Branch.A:
+            names_ = [i["name"] for r in a.operating_rows for i in r["items"]]
+            body = " · ".join(names_[:6]) or "메뉴 표기 없음"
+            if len(names_) > 6:
+                # ★ 자른 사실을 표시하고 **끝내지 않는다.**
+                #   후생관 점심은 코너가 11개라 32품목이 온다. 6개만 보이고
+                #   나머지를 볼 길이 없으면 그건 우리가 정보를 숨긴 것이다.
+                body += f" 외 {len(names_) - 6}개"
+                truncated.append(ko)
+            lines.append(f"[{ko}] {body}")
+        elif a.branch is Branch.B and a.reason == "closed_observed":
+            # 원천이 '운영없음' 이라고 적었다 — 관측된 휴무다
+            lines.append(f"[{ko}] 식단표에 '운영없음' 으로 올라와 있어요")
+        elif a.branch is Branch.B:
+            lines.append(f"[{ko}] 이 시간대는 운영하지 않아요")
+        elif a.branch is Branch.C1:
+            # ★ 운영은 하는데 메뉴가 아직 없다. '휴무' 가 아니다.
+            lines.append(f"[{ko}] 운영하는데 메뉴가 아직 안 올라왔어요")
+        else:
+            lines.append(f"[{ko}] 아직 확인하지 못했어요")
+    stamp = observed_label(next((a.observed_at for _m, a in answers
+                                 if a.observed_at), None))
+    if stamp:
+        lines += ["", f"({stamp} 기준)"]
+    lines.append(source_url)
+    qr = [kakao.quick_reply(f"{ko} 자세히", f"{name} {ko}") for ko in truncated]
+    qr += [kakao.quick_reply("다른 식당", "학식"),
+           kakao.quick_reply("처음으로", "처음으로")]
+    return kakao.response([kakao.simple_text("\n".join(lines))],
+                          qr[:kakao.MAX_QUICK_REPLIES])
+
 
 def render_overview(rows, *, date: str, meal_type: str) -> dict:
     """식당을 안 말한 발화 — 운영 중인 곳을 한 장으로.
@@ -319,12 +405,23 @@ def render_upcoming(rows, *, today: str, days: int, source_url: str,
             [kakao.quick_reply("오늘 학식"), kakao.quick_reply("처음으로")])
 
     if not rows:
+        # ★ 여기 붙던 '이번 학기 전체' 버튼이 자기 자신으로 돌아왔다 (2026-08-14)
+        #   messageText 가 '학사일정 전체' 였는데 '전체' 를 읽는 데가 없어서
+        #   같은 14일 조회가 다시 돌고 같은 답과 같은 버튼이 나왔다.
+        #   학생은 빠져나갈 수 없다 — '못 찾았어요' 보다 나쁘다.
+        #
+        #   ① 버튼이 보내는 말을 우리가 **실제로 읽는 말**로 바꾼다 ('90일').
+        #   ② 이미 최대로 넓혀 놓고 또 넓히자고 하지 않는다.
+        qr = []
+        if days < MAX_UPCOMING_DAYS:
+            qr.append(kakao.quick_reply(f"앞으로 {MAX_UPCOMING_DAYS}일",
+                                        f"학사일정 {MAX_UPCOMING_DAYS}일"))
+        qr.append(kakao.quick_reply("처음으로"))
         return kakao.response(
             [kakao.simple_text(
                 f"앞으로 {days}일 안에 예정된 학사일정이 없어요.\n\n"
                 f"전체 일정은 학사일정 페이지에서 볼 수 있어요.\n{source_url}")],
-            [kakao.quick_reply("이번 학기 전체", "학사일정 전체"),
-             kakao.quick_reply("처음으로")])
+            qr)
 
     d0 = dt.date.fromisoformat(today)
     items = []

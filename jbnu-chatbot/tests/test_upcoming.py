@@ -180,3 +180,33 @@ def test_중복_문구가_안_붙는다():
                               meal_type="breakfast", source_url="https://x")
     text = r["template"]["outputs"][0]["simpleText"]["text"]
     assert "(운영없음)" not in text
+
+
+def test_일정이_없을_때_버튼이_자기_자신으로_안_돌아온다():
+    """★ 버튼 전수를 세 겹으로 넓혔더니 무한 루프가 나왔다 (2026-08-14).
+
+    '앞으로 14일 안에 일정이 없어요' 에 '이번 학기 전체' 버튼이 붙었는데
+    보내는 말이 '학사일정 전체' 였다. '전체' 를 읽는 데가 없어서
+    같은 14일 조회가 다시 돌고, 같은 답과 같은 버튼이 나왔다.
+
+    ★ 버튼이 보내는 말은 우리가 **실제로 읽는 말**이어야 한다.
+    """
+    r = templates.render_upcoming([], today="2026-08-14", days=14,
+                                  source_url="https://x")
+    msgs = [q["messageText"] for q in r["template"]["quickReplies"]]
+    assert "학사일정 전체" not in msgs
+    assert f"학사일정 {templates.MAX_UPCOMING_DAYS}일" in msgs
+
+    # 이미 최대로 넓혔으면 또 넓히자고 하지 않는다 — 그게 루프였다
+    r2 = templates.render_upcoming([], today="2026-08-14",
+                                   days=templates.MAX_UPCOMING_DAYS,
+                                   source_url="https://x")
+    msgs2 = [q["messageText"] for q in r2["template"]["quickReplies"]]
+    assert not any("학사일정" in m for m in msgs2)
+
+
+def test_버튼이_보내는_일수를_서버가_읽는다():
+    """버튼 문구와 서버 상한이 같은 수여야 한다 — 다르면 버튼이 못 지킬 약속을 한다."""
+    from skill import server
+    assert server._resolve_days(
+        {}, f"학사일정 {templates.MAX_UPCOMING_DAYS}일") == templates.MAX_UPCOMING_DAYS

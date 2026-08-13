@@ -144,23 +144,37 @@ def test_params가_비어도_발화로_답한다(db):
     assert "준비되지 않았어요" not in str(r)
 
 
-def test_식당을_안_말하면_전체_목록(db):
-    """'오늘 학식' — 폴백이 아니라 운영 중인 곳을 보여준다.
+def test_식당도_끼니도_안_말하면_되묻는다(db):
+    """'오늘 학식' — 폴백이 아니라 **어느 식당인지 되묻는다**.
 
     자료는 있고 어느 식당인지만 모르는 상태다. '모른다'와 '안 물었다'는 다르다.
+
+    ★ 전에는 전체 목록을 보여줬는데, 그러려면 끼니를 하나 골라야 했다.
+      시각으로 골랐고 — 새벽에 물으면 조식만 나갔다. 그날 점심에는
+      세 식당 다 메뉴가 있었는데도 그랬다. 고르는 것 자체가 추측이었다.
     """
     r = server.handle(db, "food.menu.today", _payload("오늘 학식 뭐야"), now=NOW)
     assert kakao.validate(r) == []
-    card = r["template"]["outputs"][0]["listCard"]
-    titles = [i["title"] for i in card["items"]]
-    assert "후생관" in titles and "진수원" in titles
+    assert "listCard" not in r["template"]["outputs"][0]
+    labels = [q["label"] for q in r["template"]["quickReplies"]]
+    assert "후생관" in labels and "진수원" in labels
     assert "준비되지 않았어요" not in str(r)
 
 
-def test_전체_목록에_추천질문이_붙는다(db):
-    r = server.handle(db, "food.menu.today", _payload("학식"), now=NOW)
-    labels = [q["label"] for q in r["template"]["quickReplies"]]
-    assert any("자세히" in l for l in labels), "다음 행동을 열어준다"
+def test_끼니만_말하면_전체_목록(db):
+    """'점심' 이라고 밝혔으면 그 끼니로 전체 식당을 보여준다 — 추측이 아니다."""
+    r = server.handle(db, "food.menu.today", _payload("점심 학식"), now=NOW)
+    assert kakao.validate(r) == []
+    titles = [i["title"] for i in r["template"]["outputs"][0]["listCard"]["items"]]
+    assert "후생관" in titles and "진수원" in titles
+
+
+def test_식당만_말하면_세_끼니_전부(db):
+    """★ 학생이 '오늘' 을 물었으면 조·중·석이 다 나가야 한다."""
+    r = server.handle(db, "food.menu.today", _payload("후생관 학식"), now=NOW)
+    assert kakao.validate(r) == []
+    text = r["template"]["outputs"][0]["simpleText"]["text"]
+    assert "[아침]" in text and "[점심]" in text and "[저녁]" in text
 
 
 def test_발화에서_끼니도_보완된다(db):

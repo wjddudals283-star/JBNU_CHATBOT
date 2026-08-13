@@ -530,8 +530,12 @@ def _handle_section(db_path: pathlib.Path, utterance: str, *,
                                    result.query_tokens or [])
         finally:
             _c.close()
-        chosen = clarify.already_narrowed(
-            utterance, opts, result.query_tokens or []) or \
+        # ★ 순서가 중요하다. 발화가 선택지와 **똑같으면** 누른 것이다 —
+        #   already_narrowed 는 한정어 없는 라벨을 일부러 건너뛰므로
+        #   ('시험 언제' 오판을 막느라) 그 앞에 둬야 루프가 안 생긴다.
+        chosen = clarify.chosen_option(utterance, opts) or \
+            clarify.already_narrowed(
+                utterance, opts, result.query_tokens or []) or \
             clarify.narrowed_by_qualifier(utterance, opts,
                                           result.query_tokens or [])
         if opts and chosen:
@@ -640,12 +644,15 @@ _DAYS_RE = re.compile(r"(\d+)\s*일")
 
 
 def _resolve_days(params: dict, utterance: str) -> int:
+    # ★ 상한은 templates 와 **같은 수**를 쓴다. 버튼 문구가 '앞으로 90일' 인데
+    #   서버가 90 을 못 받으면 우리가 붙인 버튼이 거짓말을 한다.
+    cap = templates.MAX_UPCOMING_DAYS
     raw = str(params.get("days") or "").strip()
     if raw.isdigit():
-        return max(1, min(int(raw), 90))
+        return max(1, min(int(raw), cap))
     m = _DAYS_RE.search(utterance or "")
     if m:
-        return max(1, min(int(m.group(1)), 90))
+        return max(1, min(int(m.group(1)), cap))
     if "이번 달" in (utterance or "") or "이번달" in (utterance or ""):
         return 31
     return UPCOMING_DEFAULT_DAYS
@@ -663,12 +670,38 @@ def _handle_meal(db_path: pathlib.Path, params: dict, detail: dict,
     log.info("[skill] facility=%s via=%s utterance=%r",
              facility_id or "-", source, utterance[:40])
 
-    date = _resolve_date(params, detail, now)
+    date = _resolve_date(params, detail, now, utterance)
+    specified = _meal_specified(params, utterance)
     meal_type = _resolve_meal_type(params, now, utterance)
 
     if facility_id is None:
-        # "오늘 학식"처럼 식당을 안 말하는 발화. 폴백 대신 전체 식당을 보여준다.
+        # ★ 식당도 끼니도 안 밝혔으면 **되묻는다.**
+        #   네 식당 × 세 끼니를 한 화면에 쏟으면 읽을 수가 없고,
+        #   하나를 골라 주면 그건 추측이다.
+        if not specified:
+            return templates.render_meal_ask(
+                [aliases.canonical_name(f) for f in aliases.all_facility_ids()],
+                date=date)
+        # 끼니는 밝혔다 — 그 끼니로 전체 식당을 보여준다
         return _handle_overview(db_path, date=date, meal_type=meal_type, now=now)
+
+    if not specified:
+        # ★ 식당은 정해졌고 끼니를 안 밝혔다 → 조·중·석 **전부**
+        conn = repo.connect(db_path, readonly=True)
+        try:
+            answers = [(m, branch.resolve_meal(conn, facility_id=facility_id,
+                                               date=date, meal_type=m, now=now))
+                       for m in MEALS_IN_ORDER]
+            for _m, a in answers:
+                if a.branch is branch.Branch.A:
+                    repo.attach_prices(conn, a.rows, facility_id=facility_id,
+                                       on_date=date)
+        finally:
+            conn.close()
+        return templates.render_meal_day(
+            FACILITY_NAME.get(facility_id, aliases.canonical_name(facility_id)),
+            answers, date=date,
+            source_url=SOURCE_URL.get(facility_id, ""))
 
     # ── 3. 온톨로지 조회 + 게이트 ──
     conn = repo.connect(db_path, readonly=True)
@@ -686,6 +719,7 @@ def _handle_meal(db_path: pathlib.Path, params: dict, detail: dict,
             date=date, meal_type=meal_type,
             source_url=SOURCE_URL.get(facility_id, ""),
             contact=CONTACT.get(facility_id),
+            today=now.date().isoformat(),
             has_price_table=has_prices,
         )
     finally:
@@ -716,7 +750,30 @@ def _resolve_facility(params: dict, utterance: str = "") -> str | None:
     return fid
 
 
-def _resolve_date(params: dict, detail: dict, now: dt.datetime) -> str:
+# ★ 언어 표면이지 학교 관측이 아니다 — 하드코딩 금지의 예외다 (조사·인사말과 같은 칸).
+_RELATIVE_DAYS = {"그저께": -2, "어제": -1, "오늘": 0, "내일": 1, "낼": 1,
+                  "모레": 2, "글피": 3}
+
+
+def _relative_date(utterance: str, now: dt.datetime) -> str | None:
+    """발화에 든 '내일' 같은 말. 없으면 None.
+
+    ★ 우리가 붙인 버튼이 거짓말을 하고 있었다 (2026-08-14, 버튼 전수)
+      '내일 메뉴' 를 누르면 messageText 로 '후생관 내일 점심' 이 오는데
+      **오늘** 메뉴가 나왔다. 날짜를 발화에서 안 읽었기 때문이다.
+      오픈빌더가 sys.date 를 채워 주는 경로만 보고 있었는데,
+      버튼은 폴백(블록 없음)으로 들어와서 params 가 비어 있다.
+
+      끼니는 발화에서 보완하면서 날짜는 안 했다 — 같은 자리에 둔다.
+    """
+    for word, delta in _RELATIVE_DAYS.items():
+        if word in utterance:
+            return (now.date() + dt.timedelta(days=delta)).isoformat()
+    return None
+
+
+def _resolve_date(params: dict, detail: dict, now: dt.datetime,
+                  utterance: str = "") -> str:
     """`sys.date` 는 JSON 문자열로 온다 — json.loads 후 date 키를 쓴다."""
     node = detail.get("date") or detail.get("sys_date")
     if isinstance(node, dict):
@@ -737,7 +794,25 @@ def _resolve_date(params: dict, detail: dict, now: dt.datetime) -> str:
                 pass
         elif len(raw) == 10:
             return raw
-    return now.date().isoformat()
+    return _relative_date(utterance, now) or now.date().isoformat()
+
+
+MEALS_IN_ORDER = ("breakfast", "lunch", "dinner")
+
+
+def _meal_specified(params: dict, utterance: str = "") -> bool:
+    """학생이 끼니를 **밝혔는가**.
+
+    ★ 안 밝혔으면 우리가 고르지 않는다
+      전에는 시각으로 하나를 골랐다 — 새벽에 물으면 조식만 나갔고,
+      정작 그날 점심에는 세 식당 다 메뉴가 있었다.
+      '지금 시각' 은 학생이 무엇을 궁금해하는지에 대한 근거가 아니다.
+    """
+    raw = str(params.get("meal_type") or "").strip()
+    if raw and (repo.MEAL_TYPE_FROM_SOURCE.get(raw)
+                or raw in ("breakfast", "lunch", "dinner")):
+        return True
+    return bool(aliases.find_meal_type(utterance))
 
 
 def _resolve_meal_type(params: dict, now: dt.datetime, utterance: str = "") -> str:

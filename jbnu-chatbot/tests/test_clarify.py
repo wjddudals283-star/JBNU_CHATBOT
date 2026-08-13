@@ -328,3 +328,35 @@ def test_사이트로_좁혀_못_찾으면_안_좁히고_다시_찾는다(tmp_pa
     host, _ = ss.match_site("학자금 대출")
     assert host == "dl.jbnu.ac.kr", "별칭 상황이 바뀌었다 — 테스트를 다시 봐야 한다"
     assert "force_all_sites" in ss._attempt.__code__.co_varnames
+
+
+# ═══════════════════════════════════════════════════════════════
+# 되묻기가 자기 자신으로 돌아오면 안 된다
+# ═══════════════════════════════════════════════════════════════
+
+def test_선택지를_그대로_보내면_고른_것이다():
+    """★ 버튼 전수를 세 겹으로 넓혔더니 무한 루프가 나왔다 (2026-08-14).
+
+    '시험' 을 물으면 선택지가 ['시험', '조기시험'] 인데
+    '시험' 을 누르면 **같은 되묻기가 또** 나왔다. 학생은 빠져나갈 수 없다.
+
+    already_narrowed 가 한정어 없는 라벨을 일부러 건너뛰는 게 원인이었다.
+    그 규칙 자체는 맞다 — '시험 언제' 는 아무것도 고른 게 아니다.
+    다만 **발화 전체가 라벨과 같으면** 그건 고른 것이다.
+    """
+    opts = ["시험", "조기시험"]
+    assert clarify.chosen_option("시험", opts) == "시험"
+    assert clarify.chosen_option("조기시험", opts) == "조기시험"
+    # 한정어 없는 라벨이라 already_narrowed 는 (일부러) 안 잡는다
+    assert clarify.already_narrowed("시험", opts, ["시험"]) is None
+
+
+def test_고른_게_아니면_여전히_되묻는다():
+    """'시험 언제' 는 '시험' 을 고른 게 아니다 — 이걸 깨면 예전 오판이 돌아온다."""
+    opts = ["시험", "조기시험"]
+    assert clarify.chosen_option("시험 언제", opts) is None
+    assert clarify.chosen_option("시험 일정 알려줘", opts) is None
+
+
+def test_띄어쓰기가_달라도_고른_것으로_본다():
+    assert clarify.chosen_option("일반휴학", ["일반 휴학", "군입대 휴학"]) == "일반 휴학"

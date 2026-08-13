@@ -148,6 +148,30 @@ def exact_block(conn, page_url: str, utterance: str) -> dict | None:
     return None
 
 
+def chosen_option(utterance: str, labels: list[str]) -> str | None:
+    """발화가 선택지 **그 자체**인가. 그러면 학생이 그걸 누른 것이다.
+
+    ★ 되묻기가 자기 자신으로 돌아오고 있었다 (2026-08-14, 버튼 전수 3겹)
+      '시험' 을 물으면 선택지가 ['시험', '조기시험'] 로 나오는데,
+      '시험' 을 누르면 같은 되묻기가 또 나왔다. 무한 루프다.
+
+      원인은 already_narrowed 가 **일부러** 걸러내는 자리였다 —
+      '시험 언제' 가 라벨 '시험' 에 걸려 '이미 골랐다' 가 되는 걸 막느라
+      한정어 없는 라벨을 판정에서 뺐다. 그 규칙은 맞다. 다만
+      **발화 전체가 라벨과 같은 경우**는 추측이 아니라 확인이다.
+      '시험 언제' 는 고른 게 아니고, '시험' 은 고른 것이다.
+
+    ★ 선택지를 눌렀으면 그 제목의 블록을 준다 — 그게 되묻기의 계약이다.
+    """
+    u = _norm(utterance)
+    if not u:
+        return None
+    for lab in labels:
+        if _norm(lab) == u:
+            return lab
+    return None
+
+
 def already_narrowed(utterance: str, labels: list[str],
                      tokens: list[str] | None = None) -> str | None:
     """질문에 이미 한정어가 있나. 있으면 되묻지 않는다.

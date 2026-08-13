@@ -65,17 +65,38 @@ def press(db: pathlib.Path, text: str) -> tuple[str, list[str]]:
     return body.replace("\n", " "), qr
 
 
-def collect(db: pathlib.Path, seeds: list[str]) -> dict[str, set[str]]:
-    """씨앗 답변들에서 버튼을 모은다. 버튼 → 그 버튼이 붙어 있던 질문들."""
+def collect(db: pathlib.Path, seeds: list[str], *,
+            depth: int = 3) -> dict[str, set[str]]:
+    """씨앗 답변들에서 버튼을 모은다. 버튼 → 그 버튼이 붙어 있던 질문들.
+
+    ★ 한 겹만 보면 못 본다 (2026-08-14)
+      '점심 자세히' 는 '학식' → '후생관' → 거기서 처음 나온다. 세 겹이다.
+      한 겹만 훑던 때 그 버튼은 아예 세어지지 않았다 —
+      **버튼을 눌러야 나오는 버튼이 안 눌린 버튼이다.**
+      본 것은 다시 안 누르므로 겹을 늘려도 금방 수렴한다.
+    """
     found: dict[str, set[str]] = {}
-    for s in seeds:
-        try:
-            _, qr = press(db, s)
-        except Exception:  # noqa: BLE001
-            continue
-        for b in qr:
-            if b:
+    seen: set[str] = set()
+    frontier = [s for s in seeds]
+    for _ in range(depth):
+        nxt: list[str] = []
+        for s in frontier:
+            if s in seen:
+                continue
+            seen.add(s)
+            try:
+                _, qr = press(db, s)
+            except Exception:  # noqa: BLE001
+                continue
+            for b in qr:
+                if not b:
+                    continue
                 found.setdefault(b, set()).add(s or "(빈 발화)")
+                if b not in seen:
+                    nxt.append(b)
+        if not nxt:
+            break
+        frontier = nxt
     return found
 
 
@@ -92,11 +113,15 @@ def main(argv: list[str] | None = None) -> int:
     print("=" * 74)
     print(f"우리가 붙인 버튼 {len(buttons)}종 — 전부 눌러 본다")
     print("=" * 74)
-    bad, ask, ok = [], [], []
+    bad, loop, ask, ok = [], [], [], []
     for b in sorted(buttons):
-        body, _ = press(db, b)
+        body, back = press(db, b)
         if any(m in body for m in BAD_MARKS):
             bad.append((b, body, buttons[b]))
+        elif b in back:
+            # ★ 누른 버튼이 **그 버튼을 또** 내놓는다 — 빠져나갈 수 없다.
+            #   '못 찾았어요' 보다 나쁘다. 학생은 자기가 뭘 잘못했는지 모른다.
+            loop.append((b, body, buttons[b]))
         elif any(m in body for m in ASK_MARKS):
             ask.append((b, body, buttons[b]))
         else:
@@ -110,6 +135,15 @@ def main(argv: list[str] | None = None) -> int:
             print(f"       붙은 곳: {', '.join(sorted(where))[:60]}")
     else:
         print("\n★ 눌렀을 때 답이 안 나오는 버튼 없음")
+
+    if loop:
+        print(f"\n★ 자기 자신으로 돌아오는 버튼 {len(loop)}개 — **고장이다**")
+        for b, body, where in loop:
+            print(f"  🔁 [{b}]")
+            print(f"       → {body[:78]}")
+            print(f"       붙은 곳: {', '.join(sorted(where))[:60]}")
+    else:
+        print("★ 자기 자신으로 돌아오는 버튼 없음")
 
     if ask:
         print(f"\n되물음으로 가는 버튼 {len(ask)}개 — **고장은 아니다**")
