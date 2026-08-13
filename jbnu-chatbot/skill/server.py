@@ -385,6 +385,17 @@ def handle(db_path: pathlib.Path, block_name: str | None, payload: dict,
         log.info("[skill] smalltalk=%s utterance=%r", kind, utterance[:40])
         return smalltalk.response(kind)
 
+    # ── 1-c. 첫 인사. 검색보다 먼저 —— 할 말이 없으면 찾을 것도 없다 ──
+    #    ★ 폴백과 헷갈리면 안 된다. 가르는 것은 **발화가 비었는지**다.
+    #      오픈빌더 정적 카드가 두 번 저장에 실패해서 스킬로 가져왔다.
+    if routing.is_welcome(payload, path_block=block_name):
+        block = (payload.get("userRequest") or {}).get("block") or {}
+        # ★ 카카오가 웰컴 블록에 무슨 이름을 붙이는지 모른다. 실제 값을 남긴다 —
+        #   폴백 때 'block 이 아예 안 온다' 를 이렇게 알아냈다.
+        log.info("[welcome] block=%r shape=%s utterance=%r",
+                 block.get("name"), routing._shape(payload), utterance[:20])
+        return templates.render_welcome()
+
     # ── 2. 블록 라우팅 ──
     handler, via = routing.resolve(payload, path_block=block_name)
     log.info("[skill] block=%r via=%s utterance=%r",
@@ -407,6 +418,8 @@ def handle(db_path: pathlib.Path, block_name: str | None, payload: dict,
                  manual.verified_at)
         return templates.render_manual(manual, utterance=utterance)
 
+    if handler == "welcome":
+        return templates.render_welcome()
     if handler == "info.search":
         return _handle_section(db_path, utterance)
     if handler == "notice.search":
@@ -423,6 +436,11 @@ def handle(db_path: pathlib.Path, block_name: str | None, payload: dict,
         # '오늘 학식' 을 안내 검색에 넣으면 '오늘' 을 찾다가 실패한다.
         guess, why = routing.by_utterance(utterance)
         log.info("[skill] fallback→%s (%s)", guess or "info.search", why)
+        if guess == "welcome":
+            # ★ '처음으로' 는 우리가 **모든 답변에 붙이는 버튼**이다.
+            #   누르면 그 말이 발화로 오는데, 검색으로 보내면
+            #   "'처음'은 학과마다 달라요" 같은 엉뚱한 답이 나간다. 실제로 그랬다.
+            return templates.render_welcome()
         if guess == "food.menu.today":
             return _handle_meal(db_path, params, detail, utterance, now=now)
         if guess == "deadline.upcoming":

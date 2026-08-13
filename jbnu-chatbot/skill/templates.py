@@ -585,6 +585,28 @@ def render_chosen(label: str, text: str, *, where: str, page_url: str,
     )
 
 
+# 첫 화면 버튼. **누르면 반드시 답이 나오는 것만** 넣는다.
+#   메뉴는 약속이다. 눌렀는데 '못 찾았어요' 가 나오면 그 뒤로 아무것도 안 누른다.
+#   다섯 개 전부 봇테스트로 답을 확인했다 (2026-08-13).
+#   '총학 공지' 는 원천이 인스타라 뺐다 — 크롤이 못 닿는다.
+WELCOME_MENU = ["오늘 학식", "학사일정", "휴학", "자퇴 절차", "졸업요건"]
+
+
+def render_welcome() -> dict:
+    """첫 인사. 무엇을 물을 수 있는지 보여준다.
+
+    ★ 인사만 하고 끝내지 않는다
+      학생은 대개 뭘 물어도 되는지 몰라서 아무 말이나 던진다.
+      버튼은 '이런 걸 물어도 된다' 는 예시이기도 하다.
+    """
+    text = ("전북대 총학생회 챗봇이에요.\n"
+            "학교 정보를 대신 찾아드려요.\n\n"
+            "아래 버튼을 누르거나, 궁금한 걸 그냥 물어보세요.")
+    return kakao.response(
+        [kakao.simple_text(text)],
+        [kakao.quick_reply(m, m) for m in WELCOME_MENU])
+
+
 def render_clarify(subject: str, options: list[str], *, where: str,
                    page_url: str = "", observed: str = "") -> dict:
     """되묻기 — 문서가 갈라 놓은 대로 물어본다.

@@ -146,6 +146,32 @@ def _shape(payload: dict) -> str:
     return " ".join(parts)
 
 
+def is_welcome(payload: dict, *, path_block: str | None = None,
+               config_path: pathlib.Path | None = None) -> bool:
+    """첫 인사인가.
+
+    ★ 폴백과 헷갈리면 안 된다 — 가르는 것은 **발화가 비었는지**다
+      폴백도 블록 정보가 비어서 온다. 웰컴은 거기에 **할 말이 없다**는 게 더해진다.
+      검색할 것이 없으니 검색으로 보낼 이유도 없다.
+
+    ★ 이름은 후보로만 둔다
+      카카오가 웰컴 블록에 무슨 이름을 붙이는지 우리가 정하지 않는다.
+      맞으면 바로 되고, 틀려도 빈 발화 규칙이 받아 준다.
+      실제 이름은 로그에 남는다 — 폴백 때와 같은 방식이다.
+    """
+    ur = payload.get("userRequest") or {}
+    if not str(ur.get("utterance") or "").strip():
+        return True
+    names = {_norm(n) for n in
+             ((load(config_path).get("handlers") or {}).get("welcome") or [])}
+    block = ur.get("block") or {}
+    for cand in (path_block, block.get("name"),
+                 (payload.get("intent") or {}).get("name")):
+        if cand and _norm(str(cand)) in names:
+            return True
+    return False
+
+
 def by_utterance(utterance: str,
                  config_path: pathlib.Path | None = None) -> tuple[str | None, str]:
     """폴백으로 들어온 말의 갈래를 별칭으로 정한다. **폴백 경로에서만 쓴다.**
