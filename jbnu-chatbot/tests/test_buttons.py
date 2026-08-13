@@ -94,3 +94,27 @@ def test_나열형_라벨은_쪼갠다():
     assert clarify._split_listed("일반 휴학") == ["일반 휴학"]
     # 쪼갠 조각이 너무 짧으면 원래대로 (쪼개서 못 쓰게 만들지 않는다)
     assert clarify._split_listed("가, 나") == ["가, 나"]
+
+
+def test_사이트가_여럿인_것과_학과마다_다른_것은_다르다():
+    """★ '교내 행사' 후보가 본부·연구소·센터 다섯 곳이었는데
+    "학과마다 내용이 달라요" 라고 답했다. 학과는 하나도 없었다.
+
+    사이트가 여럿 = 여러 곳에 흩어짐.
+    학과마다 다름 = 본부에 공통 문서가 없음 (오늘 만든 축).
+    두 개를 같은 말로 답하면 답이 있는데도 되묻는 것처럼 보인다.
+    """
+    from skill import section_search as ss, templates
+
+    class _Hit:
+        site_name = "전북대학교 본부"
+        page_title = "교내공지"
+        page_url = "https://x"
+        quote_path = path = "교내공지"
+
+    r = ss.SearchResult(ss.Outcome.AMBIGUOUS, query_tokens=["행사"])
+    r.hits = [_Hit(), _Hit()]
+    out = templates.render_section(r, utterance="교내 행사")
+    body = " ".join(o.get("simpleText", {}).get("text", "")
+                    for o in out["template"]["outputs"])
+    assert "학과마다" not in body, body

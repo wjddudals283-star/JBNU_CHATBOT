@@ -688,7 +688,12 @@ def render_section(result, *, utterance: str = "") -> dict:
                           "description": h.page_title or
                           (h.quote_path or h.path).split(" > ")[-1],
                           "link": h.page_url})
-        multi_site = len({getattr(h, "site_name", "") for h in result.hits}) > 1
+        # ★ '사이트가 여럿' 과 '학과마다 다르다' 는 다른 말이다
+        #   '교내 행사' 후보가 본부·연구소·센터 다섯 곳이었는데
+        #   "학과마다 내용이 달라요" 라고 답했다. 학과는 하나도 없었다.
+        #   오늘 만든 축(본부 문서가 후보에 있나)을 여기에도 쓴다 —
+        #   그 판정이 needs_attribute 다. 축이 하나면 두 곳에서 안 어긋난다.
+        dept_dependent = getattr(result, "needs_attribute", "") == "학과"
         missing = getattr(result, "missing_tokens", [])
         if missing:
             # 질문의 낱말을 못 찾았으면 그 사실을 먼저 말한다.
@@ -702,7 +707,8 @@ def render_section(result, *, utterance: str = "") -> dict:
             #   "'통금' 안내이 여러 곳에" 가 나왔다 — 원래 맞던 걸 깬 것이다.
             header = f"'{subject}' 안내가 여러 곳에 있어요"
             tail = ("학과마다 내용이 달라요. 어느 학과인지 알려주시면 그곳만 찾아드릴게요."
-                    if multi_site else "어느 쪽을 찾으시는지 눌러서 확인해 주세요.")
+                    if dept_dependent
+                    else "어느 쪽을 찾으시는지 눌러서 확인해 주세요.")
         card, _ = kakao.list_card(header, items)
         return kakao.response([card, kakao.simple_text(tail)],
                               [kakao.quick_reply("처음으로")])
