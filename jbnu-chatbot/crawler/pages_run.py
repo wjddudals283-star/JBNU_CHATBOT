@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import hashlib
 import re
 import logging
 import pathlib
@@ -264,6 +265,18 @@ def _process_chunk(rows, *, conn, stamp, delay, site_names, snapshot_root=None,
             content_chars=chars, pruned_nodes=res.pruned.get("pruned", 0),
             last_modified=res.last_modified, title=res.title,
             note=note, **common)
+        # ★ 내용이 바뀌었을 때만 한 줄 남긴다 — 신선도 N 을 손으로 안 정하려고.
+        #   섹션 해시를 이어 붙여 페이지 해시로 쓴다. 파서를 고치면 이 값도 바뀌지만,
+        #   재파싱은 이 경로를 안 타므로 '해석이 바뀐 것' 이 '내용이 바뀐 것' 으로
+        #   기록되지는 않는다.
+        try:
+            page_hash = hashlib.sha256(
+                "".join(x.section_hash for x in res.sections).encode("utf-8")
+            ).hexdigest()[:32]
+            repo.record_change(conn, page_url=u, content_hash=page_hash,
+                               observed_at=stamp)
+        except Exception:  # noqa: BLE001
+            pass          # 기록은 편의지 수집의 조건이 아니다
         sections += repo.replace_sections(
             conn, page_url=u, sections=res.sections, observed_at=stamp,
             page_last_modified=res.last_modified)

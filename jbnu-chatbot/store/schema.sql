@@ -548,3 +548,25 @@ CREATE VIRTUAL TABLE IF NOT EXISTS notice_item_fts USING fts5(
   board_name,
   tokenize = 'trigram'
 );
+
+
+-- 페이지가 **언제 바뀌었나**. 신선도 기준을 손으로 정하지 않기 위해서다.
+--
+-- ★ 왜 필요한가
+--   날짜형 답('수강신청 언제야')은 값으로 못 잰다 — 학기마다 바뀐다.
+--   형태 + 출처 + **신선도** 로 재기로 했는데, 그 '신선도 N일' 을 또 손으로
+--   정하면 같은 실수다. 페이지별 변경 주기를 세면 N 이 계산으로 나온다.
+--   600 상한·본부 유무 때처럼, 재보면 정할 게 없을 수도 있다.
+--
+-- ★ 지금 데이터로는 못 잰다 — 그래서 기록부터 시작한다
+--   last_modified 는 2.7% 만 채워져 있고, section_hash 는 현재 값만 있다.
+--
+-- ★ 답변 경로는 이 표를 안 읽는다
+--   읽기 전용 연결이 마이그레이션을 못 한다는 함정에 안 걸리게, 수집 쪽에서만 쓴다.
+CREATE TABLE IF NOT EXISTS page_change (
+  page_url      TEXT NOT NULL,
+  changed_at    TEXT NOT NULL,      -- 바뀐 걸 관측한 시각
+  content_hash  TEXT NOT NULL,
+  PRIMARY KEY (page_url, changed_at)
+);
+CREATE INDEX IF NOT EXISTS idx_change_page ON page_change(page_url, changed_at);

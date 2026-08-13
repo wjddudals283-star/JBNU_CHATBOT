@@ -1068,6 +1068,51 @@ def has_fts(conn: sqlite3.Connection) -> bool:
     ).fetchone())
 
 
+def record_change(conn: sqlite3.Connection, *, page_url: str,
+                  content_hash: str, observed_at: str) -> bool:
+    """내용이 **바뀌었을 때만** 한 줄 남긴다. 안 바뀌면 아무것도 안 한다.
+
+    ★ 신선도 기준을 손으로 정하지 않으려고 모은다
+      날짜형 답은 값으로 못 재고 신선도로 재는데, 그 'N일' 을 또 손으로 정하면
+      같은 실수다. 변경 주기가 쌓이면 N 이 계산으로 나온다.
+
+    ★ 매 수집마다 한 줄씩 쌓으면 그건 이력이 아니라 로그다
+      바뀐 것만 남겨야 '얼마나 자주 바뀌나' 를 셀 수 있다.
+    """
+    conn.execute("""CREATE TABLE IF NOT EXISTS page_change (
+                      page_url TEXT NOT NULL, changed_at TEXT NOT NULL,
+                      content_hash TEXT NOT NULL,
+                      PRIMARY KEY (page_url, changed_at))""")
+    row = conn.execute(
+        "SELECT content_hash FROM page_change WHERE page_url = ? "
+        "ORDER BY changed_at DESC LIMIT 1", (page_url,)).fetchone()
+    if row is not None and row[0] == content_hash:
+        return False
+    conn.execute(
+        "INSERT OR IGNORE INTO page_change (page_url, changed_at, content_hash) "
+        "VALUES (?,?,?)", (page_url, observed_at, content_hash))
+    return True
+
+
+def change_intervals(conn: sqlite3.Connection) -> list[float]:
+    """페이지별 변경 간격(시간). N 을 계산으로 뽑을 재료다."""
+    import datetime as _dt
+    out: list[float] = []
+    prev_url = None
+    prev_at: _dt.datetime | None = None
+    for url, at in conn.execute(
+            "SELECT page_url, changed_at FROM page_change "
+            "ORDER BY page_url, changed_at"):
+        try:
+            t = _dt.datetime.fromisoformat(at)
+        except ValueError:
+            continue
+        if url == prev_url and prev_at is not None:
+            out.append((t - prev_at).total_seconds() / 3600)
+        prev_url, prev_at = url, t
+    return out
+
+
 def rebuild_fts(conn: sqlite3.Connection) -> int:
     """검색 색인을 통째로 다시 만든다. 스키마가 뒤늦게 붙은 DB 를 위해서다."""
     if not has_fts(conn):
