@@ -516,6 +516,22 @@ def search(conn, utterance: str, *, repo) -> SearchResult:
     if first.outcome is Outcome.FOUND:
         return first
 
+    # ★ 사이트로 좁혔는데 못 찾으면, 안 좁히고 다시 찾는다
+    #   별칭이 **더 긴 말의 일부**일 때 질문이 엉뚱한 사이트에 갇힌다.
+    #       '학자금 대출' → 별칭 '대출' 이 걸려 도서관으로 좁혀짐 → 후보 0
+    #   정작 본부 '학자금 대출' 페이지에는 잎이 20개 있고 점수도 163점이었다.
+    #   ('도서 대출' 은 여전히 도서관으로 간다 — 거기서 찾히니까 이 길을 안 탄다)
+    #
+    #   어느 별칭이 위험한지 목록으로 관리하지 않는다. 좁혀서 못 찾았다는
+    #   **관측**이 곧 근거다. 2차 동의어 확장과 같은 모양이다.
+    if first.site_host and first.outcome in (Outcome.NOT_FOUND, Outcome.NO_DATA):
+        wide = _attempt(conn, utterance, tokens, repo=repo, expand={},
+                        force_all_sites=True)
+        if wide.outcome is Outcome.FOUND:
+            wide.defer_reason = (f"'{first.site_name}' 로 좁히면 못 찾아서 "
+                                 f"전체에서 다시 찾음")
+            return wide
+
     expand = {t: (expand_token(t) - {t}) for t in tokens}
     expand = {t: v for t, v in expand.items() if v}
     if not expand:
@@ -539,14 +555,16 @@ def search(conn, utterance: str, *, repo) -> SearchResult:
 
 
 def _attempt(conn, utterance: str, tokens: list[str], *, repo,
-             expand: dict[str, frozenset[str]]) -> SearchResult:
+             expand: dict[str, frozenset[str]],
+             force_all_sites: bool = False) -> SearchResult:
 
     total = repo.section_total(conn)
     if total == 0:
         # 조회할 것이 아예 없다. '없다' 가 아니라 '아직 안 긁었다' 다.
         return SearchResult(Outcome.NO_DATA, query_tokens=tokens)
 
-    site_host, site_label = match_site(utterance)
+    site_host, site_label = ((None, "") if force_all_sites
+                             else match_site(utterance))
     if site_host:
         # ★ 사이트를 가리킨 낱말은 **어디**를 정했지 **무엇**을 정하지 않았다.
         #   '기숙사 신청' 에서 '기숙사' 는 생활관 사이트를 뜻한다. 그 사이트 본문은

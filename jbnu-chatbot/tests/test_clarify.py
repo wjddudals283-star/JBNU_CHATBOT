@@ -312,3 +312,19 @@ def test_학교가_말한_수정일보다_우리_관측이_먼저다():
     line = templates._source_line(_H())
     assert line.index("8/11") < line.index("2025-01-09")   # 우리 관측이 앞
     assert "학교 표기 2025-01-09" in line                   # 버리지도 않는다
+
+
+def test_사이트로_좁혀_못_찾으면_안_좁히고_다시_찾는다(tmp_path):
+    """★ 별칭이 더 긴 말의 일부일 때 질문이 엉뚱한 사이트에 갇힌다.
+
+        '학자금 대출' → 별칭 '대출' 이 걸려 도서관으로 좁혀짐 → 후보 0
+    정작 본부 '학자금 대출' 페이지에는 잎이 20개 있고 점수도 163점이었다.
+
+    위험한 별칭 목록을 만들지 않는다 — '좁혀서 못 찾았다' 는 관측이 곧 근거다.
+    ('도서 대출' 은 도서관에서 찾히므로 이 길을 안 탄다)
+    """
+    from skill import section_search as ss
+    # 별칭이 실제로 '대출' 을 도서관으로 보내고 있어야 이 테스트가 뜻이 있다
+    host, _ = ss.match_site("학자금 대출")
+    assert host == "dl.jbnu.ac.kr", "별칭 상황이 바뀌었다 — 테스트를 다시 봐야 한다"
+    assert "force_all_sites" in ss._attempt.__code__.co_varnames
