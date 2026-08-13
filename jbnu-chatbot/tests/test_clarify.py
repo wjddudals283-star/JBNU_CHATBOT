@@ -287,8 +287,12 @@ def test_출처에_우리가_본_시각을_붙인다():
     """
     from skill import templates
     assert templates.stamp_line("본부 · 자퇴", "8/11 13:28 확인") \
-        == "📄 본부 · 자퇴 (8/11 13:28 확인 기준)"
+        == "📄 본부 · 자퇴 (8/11 13:28 확인)"
     assert templates.stamp_line("본부 · 자퇴", "") == "📄 본부 · 자퇴"
+    # 학교 표기는 **뒤에** 붙는다. 버리지 않고, 우리 관측보다 앞세우지도 않는다.
+    assert templates.stamp_line("본부 · 자퇴", "8/11 확인",
+                                page_modified="2025-01-09") \
+        == "📄 본부 · 자퇴 (8/11 확인 · 학교 표기 2025-01-09)"
 
 
 def test_학교가_말한_수정일보다_우리_관측이_먼저다():
