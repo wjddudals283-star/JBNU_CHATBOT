@@ -297,7 +297,9 @@ def render_overview(rows, *, date: str, meal_type: str) -> dict:
                          if len(items) > kakao.MAX_LIST_ITEMS else None))
 
     qr = [kakao.quick_reply(f"{n} 자세히", f"{n} {meal_ko}") for n in operating[:3]]
-    qr.append(kakao.quick_reply("내일 학식", f"내일 {meal_ko}"))
+    # ★ 시설명이 없으면 폴백 경로에서 식단으로 안 간다 — '내일 저녁' 이
+    #   '저녁' 만 남아 안내 검색으로 샜다. '학식' 을 넣어 갈래를 고정한다.
+    qr.append(kakao.quick_reply("내일 학식", f"내일 학식 {meal_ko}"))
     return kakao.response([card], qr)
 
 

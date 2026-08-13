@@ -79,14 +79,31 @@ def top_blocks(conn, page_url: str) -> list[str]:
             ORDER BY ordinal""", (page_url,))]
 
 
+def _split_listed(label: str) -> list[str]:
+    """제목이 쉼표로 갈래를 나열하면 쪼갠다.
+
+    ★ 문서가 이미 갈라 놓은 것을 우리가 붙여 놓고 있었다
+        '일반복학, 임신·출산·육아 복학, 창업복학, 질병복학(학부생)'
+      이걸 버튼 하나로 주면 눌러도 못 찾는다 — 검색어로는 안 먹힌다.
+      쪼개면 각각 찾힌다 (실측 3/4). 쪼개는 근거는 **원문의 쉼표**다.
+    """
+    if "," not in label:
+        return [label]
+    parts = [x.strip(" ,·") for x in label.split(",")]
+    parts = [x for x in parts if 2 <= len(x) <= MAX_LABEL]
+    return parts if len(parts) >= 2 else [label]
+
+
 def options(conn, page_url: str, tokens: list[str]) -> list[str]:
     """되물을 선택지. 2개 미만이면 빈 목록 (= 되묻지 않는다)."""
     if not tokens:
         return []
     out: list[str] = []
     seen: set[str] = set()
+    raw: list[str] = []
     for path in top_blocks(conn, page_url):
-        label = path.split(">")[-1].strip()
+        raw.extend(_split_listed(path.split(">")[-1].strip()))
+    for label in raw:
         if not (2 <= len(label) <= MAX_LABEL):
             continue
         if not any(t in label for t in tokens):
