@@ -11,8 +11,51 @@ import datetime as dt
 from typing import Any, Callable
 
 from crawler import notices_run, pages_run
+from store import repo
 
 KST = dt.timezone(dt.timedelta(hours=9))
+
+
+def _record(db_path: str, source_key: str, now: dt.datetime, fn):
+    """작업의 성공을 crawl_run 에 남긴다.
+
+    ★ 이게 없어서 공지가 **매 틱(15분)마다** 다시 돌았다
+      due_sources 의 따라잡기는 '예정 시각이 지났는데 **오늘 성공 기록이 없으면**'
+      실행한다. notices 는 crawl_run 을 안 남겨서 succeeded_today 가 영원히
+      False 였고, 07:00 이 지난 뒤로는 매 틱 재실행됐다.
+      15분 걸리는 전량 재수집을 15분마다 — 거의 쉬지 않았다.
+      학교 서버 부담이고, 그 시간에 다른 원천이 차례를 못 받는다.
+
+      pages_run 은 자기가 crawl_run 을 남겨서 하루 한 번만 돈다.
+      **같은 스케줄러가 도는데 한쪽만 기록을 남기고 있었다.**
+    """
+    run_id = f"{source_key}-{now.strftime('%Y%m%dT%H%M%S')}"
+    conn = repo.connect(db_path)
+    try:
+        repo.start_crawl(conn, run_id=run_id, source_key=source_key,
+                         started_at=now.isoformat())
+        conn.commit()
+    finally:
+        conn.close()
+    try:
+        out = fn()
+    except Exception:
+        conn = repo.connect(db_path)
+        try:
+            repo.finish_crawl(conn, run_id, outcome="fetch_error",
+                              finished_at=dt.datetime.now(KST).isoformat())
+            conn.commit()
+        finally:
+            conn.close()
+        raise
+    conn = repo.connect(db_path)
+    try:
+        repo.finish_crawl(conn, run_id, outcome="success",
+                          finished_at=dt.datetime.now(KST).isoformat())
+        conn.commit()
+    finally:
+        conn.close()
+    return out
 
 
 def run_pages(db_path: str, cfg: dict, now: dt.datetime) -> dict:
@@ -23,8 +66,9 @@ def run_pages(db_path: str, cfg: dict, now: dt.datetime) -> dict:
 
 def run_notices(db_path: str, cfg: dict, now: dt.datetime) -> dict:
     """이미 아는 게시판만 빠르게 갱신. 새 게시판은 전수 수집에서 발견된다."""
-    return notices_run.run(db_path, delay=cfg.get("delay", 0.35), now=now,
-                           verbose=False, known_only=True)
+    return _record(db_path, "jbnu_notices", now, lambda: notices_run.run(
+        db_path, delay=cfg.get("delay", 0.35), now=now,
+        verbose=False, known_only=True))
 
 
 JOBS: dict[str, Callable[[str, dict, dt.datetime], Any]] = {
