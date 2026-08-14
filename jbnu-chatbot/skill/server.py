@@ -345,6 +345,21 @@ def create_app(db_path: pathlib.Path | None = None, *,
         payload = await request.json()
         return handle(app.state.db_path, block_name, payload)
 
+    @app.post("/admin/route", dependencies=[Depends(auth.require_token)])
+    async def route(request: Request) -> dict:
+        """이 발화를 **누가 받는가**. 답은 만들지 않는다.
+
+        ★ 응답 모양으로 추측하지 않으려고 만들었다
+          배포 서버에 46문항을 넣어 볼 때 '어느 블록이 받았나' 를
+          카드 생김새로 짐작하면 그건 관측이 아니라 추측이다.
+          handle() 이 쓰는 바로 그 함수를 그대로 부른다.
+
+        ★ DB 를 안 본다 — 순수 판정이라 답변 경로에 락을 걸지 않는다.
+        """
+        payload = await request.json()
+        r, why = route_of(payload, None)
+        return {"route": r, "why": why}
+
     @app.get("/admin/blocks", dependencies=[Depends(auth.require_token)])
     def blocks() -> dict:
         """등록된 블록 매핑 + **매핑 안 된 블록**.
@@ -367,28 +382,71 @@ def create_app(db_path: pathlib.Path | None = None, *,
 # 처리 본체 (FastAPI 없이도 테스트할 수 있게 분리)
 # ═══════════════════════════════════════════════════════════════
 
+def route_of(payload: dict, block_name: str | None = None) -> tuple[str, str]:
+    """이 발화를 **누가 받는가**. (route, why)
+
+    ★ DB 를 안 본다 — 순수 판정이다.
+      답을 만들지 않고 '누가 받는지' 만 정한다. 그래서 배포 서버에
+      질문을 넣어 볼 때 답변과 별개로 물어볼 수 있다.
+
+    ★ handle() 이 이 함수를 **쓴다**. 복사본이 아니다.
+      두 벌로 두면 순서가 갈라지고, 그러면 측정이 실제 동작과 다른 걸 잰다.
+      실제로 우리가 제일 자주 틀린 자리가 '재는 것과 도는 것이 다르다' 였다.
+
+    ★ 안전 분기가 맨 앞이라는 순서는 여기서도 그대로다 (T13).
+    """
+    utterance = (payload.get("userRequest") or {}).get("utterance", "")
+
+    if safety.is_sensitive(utterance):
+        return "safety", "민감 발화"
+    kind = smalltalk.classify(utterance)
+    if kind:
+        return "smalltalk", kind
+    if routing.is_welcome(payload, path_block=block_name):
+        return "welcome", "빈 발화 또는 웰컴 블록"
+
+    handler, via = routing.resolve(payload, path_block=block_name)
+    if handler in ("food.menu.today", "deadline.upcoming"):
+        return handler, via
+
+    # ★ 총학이 직접 확인한 답이 검색보다 먼저다 — 순서를 여기서도 지킨다.
+    manual = manual_answers.find(utterance)
+    if manual is not None:
+        return "manual", manual.key
+
+    if handler in ("welcome", "info.search", "notice.search"):
+        return handler, via
+
+    if routing.is_fallback(payload, path_block=block_name):
+        guess, why = routing.by_utterance(utterance)
+        return (guess or "info.search"), f"폴백→{why}"
+
+    # 매핑 안 된 **총학이 만든** 블록. 확신할 때만 답한다.
+    return "unmapped", via
+
+
 def handle(db_path: pathlib.Path, block_name: str | None, payload: dict,
            *, now: dt.datetime | None = None) -> dict:
     utterance = (payload.get("userRequest") or {}).get("utterance", "")
+    route, why = route_of(payload, block_name)
 
     # ── 1. 안전 분기. 인텐트 분류보다 먼저. 절대 뒤로 옮기지 말 것 ──
     #    라우팅보다도 먼저다. 어떤 블록으로 들어왔든 민감 발화면 여기서 끝난다.
-    if safety.is_sensitive(utterance):
+    if route == "safety":
         return safety.response(utterance)
 
     # ── 1-b. 인사·잡담. 질문이 아닌 말을 검색에 태우지 않는다 ──
     #    폴백을 검색으로 연결하면 학생이 아무 말이나 보낼 수 있게 된다.
     #    그게 목적이지만, '오늘 뭐해' 에 '연설문' 을 보여주는 건 아는 척이다.
     #    문장 전체가 일치할 때만 걸린다 — '밥 뭐야' 는 진짜 질문이라 통과한다.
-    kind = smalltalk.classify(utterance)
-    if kind:
-        log.info("[skill] smalltalk=%s utterance=%r", kind, utterance[:40])
-        return smalltalk.response(kind)
+    if route == "smalltalk":
+        log.info("[skill] smalltalk=%s utterance=%r", why, utterance[:40])
+        return smalltalk.response(why)
 
     # ── 1-c. 첫 인사. 검색보다 먼저 —— 할 말이 없으면 찾을 것도 없다 ──
     #    ★ 폴백과 헷갈리면 안 된다. 가르는 것은 **발화가 비었는지**다.
     #      오픈빌더 정적 카드가 두 번 저장에 실패해서 스킬로 가져왔다.
-    if routing.is_welcome(payload, path_block=block_name):
+    if route == "welcome":
         block = (payload.get("userRequest") or {}).get("block") or {}
         # ★ 카카오가 웰컴 블록에 무슨 이름을 붙이는지 모른다. 실제 값을 남긴다 —
         #   폴백 때 'block 이 아예 안 온다' 를 이렇게 알아냈다.
@@ -396,33 +454,28 @@ def handle(db_path: pathlib.Path, block_name: str | None, payload: dict,
                  block.get("name"), routing._shape(payload), utterance[:20])
         return templates.render_welcome()
 
-    # ── 2. 블록 라우팅 ──
-    handler, via = routing.resolve(payload, path_block=block_name)
-    log.info("[skill] block=%r via=%s utterance=%r",
-             handler or "-", via, utterance[:40])
+    # ── 2. 블록 라우팅 (route_of 가 이미 정했다) ──
+    log.info("[skill] route=%r why=%s utterance=%r", route, why, utterance[:40])
 
     # ── 3. 오픈빌더가 추출한 파라미터 ──
     params = (payload.get("action") or {}).get("params") or {}
     detail = (payload.get("action") or {}).get("detailParams") or {}
 
-    if handler == "food.menu.today":
+    if route == "food.menu.today":
         return _handle_meal(db_path, params, detail, utterance, now=now)
-    if handler == "deadline.upcoming":
+    if route == "deadline.upcoming":
         return _handle_upcoming(db_path, params, detail, utterance, now=now)
     # ★ 총학이 직접 확인한 답이 먼저다.
     #   홈페이지에 없는 것을 사람이 확인해 넣은 것이므로 크롤보다 근거가 세다.
     #   확인 안 됐거나 만료된 항목은 여기서 걸러져 검색으로 넘어간다.
-    manual = manual_answers.find(utterance)
-    if manual is not None:
-        log.info("[skill] manual key=%s verified_at=%s", manual.key,
-                 manual.verified_at)
-        return templates.render_manual(manual, utterance=utterance)
+    if route == "manual":
+        manual = manual_answers.find(utterance)
+        if manual is not None:
+            log.info("[skill] manual key=%s verified_at=%s", manual.key,
+                     manual.verified_at)
+            return templates.render_manual(manual, utterance=utterance)
 
-    if handler == "welcome":
-        return templates.render_welcome()
-    if handler == "info.search":
-        return _handle_section(db_path, utterance)
-    if handler == "notice.search":
+    if route == "notice.search":
         return _handle_notice(db_path, utterance)
 
     # ★ 카카오가 분류에 실패한 말(폴백)은 검색이 정확히 할 일이다.
@@ -431,22 +484,12 @@ def handle(db_path: pathlib.Path, block_name: str | None, payload: dict,
     #   6,985페이지를 모아도 이 문이 닫혀 있으면 안 쓰인다.
     #   여기서는 info.search 와 **똑같이** 답한다. 애매하면 애매하다고,
     #   못 찾으면 못 찾았다고 말한다 — 그게 밋밋한 폴백보다 낫다.
-    if routing.is_fallback(payload, path_block=block_name):
-        # 식단·공지·일정은 검색이 아니라 각자의 자료를 봐야 한다.
-        # '오늘 학식' 을 안내 검색에 넣으면 '오늘' 을 찾다가 실패한다.
-        guess, why = routing.by_utterance(utterance)
-        log.info("[skill] fallback→%s (%s)", guess or "info.search", why)
-        if guess == "welcome":
-            # ★ '처음으로' 는 우리가 **모든 답변에 붙이는 버튼**이다.
-            #   누르면 그 말이 발화로 오는데, 검색으로 보내면
-            #   "'처음'은 학과마다 달라요" 같은 엉뚱한 답이 나간다. 실제로 그랬다.
-            return templates.render_welcome()
-        if guess == "food.menu.today":
-            return _handle_meal(db_path, params, detail, utterance, now=now)
-        if guess == "deadline.upcoming":
-            return _handle_upcoming(db_path, params, detail, utterance, now=now)
-        if guess == "notice.search":
-            return _handle_notice(db_path, utterance)
+    # ★ 카카오가 분류에 실패한 말(폴백)도 route_of 가 이미 갈라 놨다.
+    #   '처음으로' 는 우리가 모든 답변에 붙이는 버튼이라 웰컴으로 가야 하고,
+    #   식단·공지·일정은 검색이 아니라 각자의 자료를 봐야 한다.
+    if route == "welcome":
+        return templates.render_welcome()
+    if route == "info.search":
         return _handle_section(db_path, utterance)
 
     # ★ 매핑 안 된 **총학이 만든** 블록은 다르다.
