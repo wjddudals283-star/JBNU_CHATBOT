@@ -640,3 +640,94 @@ def test_교내행사_별칭이_붙는다():
                                 "action": {"params": {}}})[0]
     for u in ("교내 행사", "교내행사", "학교 행사", "무슨 행사"):
         assert route(u) == "council.event", u
+
+
+# ═══════════════════════════════════════════════════════════════
+# 화면에서만 접는다 — 저장은 원문 그대로
+# ═══════════════════════════════════════════════════════════════
+
+CSV_DUP = """게시일,분류,제목,내용,인스타링크,마감일,작성국
+2026-08-12,교내행사,2026 학문체 댄스제 참가자 모집,"[2026 학문체 댄스제 참가자 모집]
+모집 기간 : 8/12(수) ~ 8/25(월) 23:59
+참가비 : 팀당 10,000원",https://x/a,2026-08-25,무대운영국
+"""
+
+
+@pytest.mark.parametrize("body,expect_first", [
+    ("[제목]\n첫 줄", "첫 줄"),
+    ("제목\n\n첫 줄", "첫 줄"),
+    ("【제목】\n첫 줄", "첫 줄"),
+    ("[제 목]\n첫 줄", "첫 줄"),          # 공백 차이
+    ("[제목]- 첫 줄", "첫 줄"),           # 구분선
+    ("다른 말\n제목 이야기", "다른 말"),     # 앞이 아니면 안 건드린다
+    ("전혀 다른 본문", "전혀 다른 본문"),
+])
+def test_본문이_제목으로_시작하면_그것만_뗀다(body, expect_first):
+    """★ 인스타 캡션이 '[제목]' 으로 시작해서 말풍선 제목과 두 번 찍혔다.
+
+    캡션 자체는 못 고친다 — 학생이 인스타로 넘어갔을 때 **같은 글이어야** 한다.
+    그래서 저장은 원문 그대로 두고 보여줄 때만 접는다.
+    """
+    got = templates.strip_leading_title(body, "제목")
+    assert got.splitlines()[0] == expect_first, got
+
+
+def test_대괄호_유무와_공백_차이를_같게_본다():
+    for body in ("[2026 댄스제]\n본문", "2026  댄스제\n본문", "【2026 댄스제】\n본문"):
+        assert templates.strip_leading_title(body, "2026 댄스제") == "본문"
+
+
+def test_제목만_있고_본문이_없으면_빈_문자열(tmp_path):
+    assert templates.strip_leading_title("[제목]", "제목") == ""
+
+
+def test_화면은_접히고_저장은_원문_그대로(tmp_path):
+    """★ 자족성 원칙 — 인스타로 넘어가도 같은 글이어야 한다."""
+    p = tmp_path / "d.db"
+    c = repo.connect(p)
+    repo.init_db(c)
+    c.execute("""INSERT INTO source_snapshot (id, source_key, url, fetched_at,
+                 http_status, content_hash, content_path, media_type)
+                 VALUES ('s','council_sheet','u','2026-08-14T09:00:00+09:00',
+                         200,'h','','html')""")
+    parsed = council_sheet.parse(CSV_DUP, today=TODAY)
+    repo.upsert_council_posts(c, parsed.rows, source_id="s", source_url="u",
+                              observed_at="2026-08-14T09:00:00+09:00")
+    c.execute("""INSERT INTO crawl_run (id, source_key, started_at,
+                 finished_at, outcome)
+                 VALUES ('r','council_sheet','2026-08-14T09:00:00+09:00',
+                         '2026-08-14T09:00:05+09:00','success')""")
+    c.commit()
+    c.close()
+
+    t = _text(server.handle(p, None, _pay("교내 행사"), now=NOW))
+    # 제목은 말풍선 머리에 한 번만
+    assert t.count("2026 학문체 댄스제 참가자 모집") == 1, t
+    assert "참가비 : 팀당 10,000원" in t, "본문은 그대로 남아야 한다"
+
+    c = repo.connect(p, readonly=True)
+    try:
+        body = c.execute("SELECT body FROM council_post").fetchone()[0]
+    finally:
+        c.close()
+    assert body.startswith("[2026 학문체 댄스제 참가자 모집]"), "저장은 원문 그대로"
+
+
+def test_거른_이름으로_부른다(tmp_path):
+    """★ '교내 행사' 로 물었는데 '다른 총학 공지' 면 다른 분류가 섞인 줄 안다."""
+    p, c = _db_cat(tmp_path)
+    c.execute("""INSERT INTO crawl_run (id, source_key, started_at,
+                 finished_at, outcome)
+                 VALUES ('r','council_sheet','2026-08-14T09:00:00+09:00',
+                         '2026-08-14T09:00:05+09:00','success')""")
+    c.commit()
+    c.close()
+    r = server.handle(p, None, _pay("교내 행사"), now=NOW)
+    heads = [o["listCard"]["header"]["title"] for o in r["template"]["outputs"]
+             if "listCard" in o]
+    assert heads == ["다른 교내 행사"], heads
+    # 총학 공지로 물으면 그대로
+    r2 = server.handle(p, None, _pay("총학 공지"), now=NOW)
+    heads2 = [o["listCard"]["header"]["title"] for o in r2["template"]["outputs"]
+              if "listCard" in o]
+    assert heads2 == ["다른 총학 공지"], heads2

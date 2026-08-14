@@ -1092,6 +1092,52 @@ def render_council_empty(*, stale: bool = False,
         [kakao.quick_reply("처음으로")])
 
 
+# 제목을 감싸는 괄호들. 인스타 캡션이 어느 걸 쓸지 우리가 못 정한다.
+_TITLE_WRAP = "[]【】〔〕<>《》「」(){}"
+
+
+def _norm_title(s: str) -> str:
+    """제목 비교용 — 공백과 괄호를 지운다.
+
+    ★ 같은 제목인데 모양이 다를 수 있다
+      대괄호 유무 · 공백 개수 · 줄바꿈. 그 차이로 '다른 제목' 이라고 보면
+      접어야 할 자리를 못 접는다.
+    """
+    return "".join(ch for ch in (s or "")
+                   if not ch.isspace() and ch not in _TITLE_WRAP)
+
+
+def strip_leading_title(body: str, title: str) -> str:
+    """본문이 제목으로 시작하면 **그 부분만** 떼어낸다.
+
+    ★ 캡션은 안 고친다 — 화면에서만 접는다 (2026-08-14)
+      인스타 캡션이 '[제목]' 으로 시작하는 경우가 많아서
+      말풍선 제목과 본문 첫 줄이 똑같이 두 번 찍혔다.
+      캡션 자체를 고칠 수는 없다 — 학생이 인스타로 넘어갔을 때
+      **같은 글이어야** 하기 때문이다 (자족성 원칙).
+      그래서 저장은 원문 그대로 두고, 보여줄 때만 겹치는 앞부분을 뗀다.
+
+    ★ 겹칠 때만, 앞에서만 뗀다
+      본문 가운데에 제목이 또 나오는 건 원문이 그런 것이므로 안 건드린다.
+    """
+    body = (body or "").strip()
+    nt = _norm_title(title)
+    if not nt or not _norm_title(body).startswith(nt):
+        return body
+    # 정규화 기준으로 제목만큼 소비한 지점을 원문에서 찾는다
+    seen, cut = 0, 0
+    for i, ch in enumerate(body):
+        if seen >= len(nt):
+            cut = i
+            break
+        if not ch.isspace() and ch not in _TITLE_WRAP:
+            seen += 1
+        cut = i + 1
+    rest = body[cut:]
+    # 제목 뒤에 남은 닫는 괄호·구분선·빈 줄을 걷어낸다
+    return rest.lstrip("]】〕>》」)}").lstrip(" \t\r\n-–—·:").strip()
+
+
 def _council_lines(p: dict) -> list[str]:
     """공지 한 건 → 줄들. ★ 요약하지 않는다.
 
@@ -1099,7 +1145,7 @@ def _council_lines(p: dict) -> list[str]:
     우리가 줄이면 그 값들이 사라진다. 길면 자르되 **자른 사실을 표시**한다.
     """
     out = [f"[{p['title']}]"]
-    body = (p.get("body") or "").strip()
+    body = strip_leading_title(p.get("body") or "", p.get("title") or "")
     if body:
         if len(body) > COUNCIL_BODY_BUDGET:
             body = body[:COUNCIL_BODY_BUDGET].rstrip()
@@ -1120,12 +1166,17 @@ def _council_lines(p: dict) -> list[str]:
 
 
 def render_council(posts: list[dict], *, utterance: str = "",
+                   label: str = "총학 공지",
                    instagram: str = COUNCIL_INSTAGRAM) -> dict:
     """총학 공지 답변.
 
     ★ 출처를 '총학생회' 라고 밝힌다
       크롤 인용은 '학교가 이렇게 적어 뒀다' 이고, 이건 '총학이 직접 넣었다' 이다.
       학생이 두 개를 같은 무게로 읽으면 안 된다 — T4 가 더 무겁다.
+
+    ★ label 은 **거른 이름**이다
+      '교내 행사' 로 물었는데 아래 목록이 '다른 총학 공지' 면
+      학생은 거기서 다른 분류가 섞였다고 읽는다. 거른 대로 부른다.
     """
     if not posts:
         return render_council_empty(instagram=instagram)
@@ -1144,7 +1195,7 @@ def render_council(posts: list[dict], *, utterance: str = "",
                                   else f"{date_label(p['published_at'])} 게시"),
                   **({"link": p["link"]} if p.get("link") else {})}
                  for p in posts[1:]]
-        card, _ = kakao.list_card("다른 총학 공지", items)
+        card, _ = kakao.list_card(f"다른 {label}", items)
         outputs.append(card)
     return kakao.response(outputs, qr)
 

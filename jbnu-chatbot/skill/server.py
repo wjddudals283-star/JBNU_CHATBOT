@@ -646,7 +646,7 @@ def _handle_council_category(db_path: pathlib.Path, category: str,
              or repo.staleness_hours(last_ok, now) > COUNCIL_STALE_HOURS)
     log.info("[council] 분류=%s %s건 stale=%s", category, len(posts), stale)
     if posts:
-        return templates.render_council(posts)
+        return templates.render_council(posts, label=label)
     if have_any and not stale:
         return templates.render_council_none_active(label)
     return templates.render_council_empty(stale=stale)
