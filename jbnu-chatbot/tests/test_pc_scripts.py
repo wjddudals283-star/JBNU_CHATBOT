@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import pathlib
+import re
 
 import pytest
 
@@ -115,3 +116,54 @@ def test_절차서가_핵심_옵션을_짚는다():
     assert "시스템 변수" in doc, "사용자 변수에 넣으면 스케줄러가 못 본다"
     # 토큰을 문서에 적어두라고 하면 안 된다
     assert "카카오톡" in doc and "붙여넣지 마세요" in doc
+
+
+# ═══════════════════════════════════════════════════════════════
+# ★ .gitignore 예외의 자물쇠
+#   저장소가 Public 이다. 한 번 커밋된 값은 지워도 히스토리에 남는다.
+#   원래 *.ps1 · *.bat 을 통째로 막고 있었다 —
+#   "백필 배치 파일에는 SKILL_TOKEN 이 들어간다" 는 옛 설계 때문이다.
+#   그 규칙을 없애지 않고 이 폴더만 좁게 열었으므로,
+#   **열어둔 자리를 커밋마다 훑는 것**이 조건이다.
+# ═══════════════════════════════════════════════════════════════
+
+# 토큰처럼 생긴 것: 따옴표 안의 20자 이상 영숫자·기호 덩어리
+_SECRETISH = re.compile(r"""['"][A-Za-z0-9_\-+/=]{20,}['"]""")
+
+
+def _tracked_scripts() -> list[pathlib.Path]:
+    return sorted(p for p in SCRIPTS.iterdir()
+                  if p.suffix.lower() in (".ps1", ".bat", ".cmd"))
+
+
+def test_스크립트_폴더에_비밀이_없다():
+    """토큰 리터럴처럼 생긴 게 하나라도 있으면 막는다.
+
+    ★ 사람이 '이번엔 안 넣었지' 를 기억하는 구조는 언젠가 진다.
+      실수 한 번이 공개 히스토리에 영구히 남는 자리라 자동으로 본다.
+    """
+    for p in _tracked_scripts():
+        s = _text(p)
+        for line in s.splitlines():
+            if line.lstrip().startswith("#"):
+                continue
+            m = _SECRETISH.search(line)
+            assert not m, f"{p.name}: 비밀처럼 보이는 값 {m.group(0)[:12]}… — {line[:60]}"
+
+
+def test_스크립트가_토큰을_요구만_하고_담지_않는다():
+    """읽기만 한다. 쓰거나 기본값을 주지 않는다."""
+    for p in _tracked_scripts():
+        s = _text(p)
+        assert "$env:SKILL_TOKEN =" not in s, f"{p.name}: 토큰을 코드에서 설정한다"
+        assert "setx SKILL_TOKEN" not in s, f"{p.name}: 토큰을 영구 저장한다"
+
+
+def test_bat_은_ps1_을_부르기만_한다():
+    """.bat 은 두 번 클릭용 껍데기다. 로직이 들어가면 검사 대상이 갈라진다."""
+    for p in _tracked_scripts():
+        if p.suffix.lower() != ".bat":
+            continue
+        body = p.read_bytes().decode("utf-8", "replace")
+        assert "powershell" in body.lower()
+        assert ".ps1" in body
