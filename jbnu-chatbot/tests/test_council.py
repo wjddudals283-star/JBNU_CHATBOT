@@ -556,3 +556,87 @@ def test_하나도_없으면_인스타로_보낸다():
     r = templates.render_career([], [])
     assert kakao.validate(r) == []
     assert "못 찾았어요" in _text(r)
+
+
+# ═══════════════════════════════════════════════════════════════
+# 들어오는 문이 둘이면 둘 다 같은 답을 해야 한다
+# ═══════════════════════════════════════════════════════════════
+
+def test_job_원천도_crawler_run_으로_돈다(tmp_path, monkeypatch):
+    """★ "파서 미구현 — 건너뜀" 이 나가고 있었다 (2026-08-14).
+
+    council_sheet 는 parser 가 아니라 job 으로 돈다.
+    스케줄러는 그 갈래를 알지만 CLI 는 몰랐다.
+    **파서는 있는데 명령이 거짓말을 했고**, 그 말을 본 사람은
+    '아직 안 만들었구나' 로 읽는다 — 실제로 그랬다.
+    """
+    from crawler import run as run_mod
+    called = {}
+
+    def fake_job(db_path, cfg, now):
+        called["yes"] = (db_path, cfg.get("job"))
+        return {"ok": True, "parsed": 2}
+
+    from crawler import jobs as jobs_mod
+    monkeypatch.setitem(jobs_mod.JOBS, "council", fake_job)
+    run_mod.run_source(None, "council_sheet", {"job": "council"},
+                       date=None, dry_run=False, force=False)
+    assert called.get("yes"), "job 원천이 그냥 건너뛰어졌다"
+
+
+def test_모르는_작업은_조용히_넘기지_않는다(tmp_path, capsys):
+    from crawler import run as run_mod
+    run_mod.run_source(None, "x", {"job": "없는작업"},
+                       date=None, dry_run=False, force=False)
+    assert "모르는 작업" in capsys.readouterr().out
+
+
+# ═══════════════════════════════════════════════════════════════
+# 갈래 셋 — 못 가져왔다 / 진행 중 없음 / 그건 못 찾았다
+# ═══════════════════════════════════════════════════════════════
+
+def test_가져왔는데_다_지났으면_못_가져왔다고_안_한다(tmp_path):
+    """★ '못 가져왔다' 는 틀린 말이다 — 가져왔다.
+
+    우리 사정(못 읽음)과 학교 사정(지금은 없음)을 섞으면
+    학생이 어디를 봐야 할지 못 정한다.
+    """
+    db = _db(tmp_path)
+    c = repo.connect(db)
+    c.execute("""UPDATE crawl_run SET started_at=?, finished_at=?
+                  WHERE source_key='council_sheet'""",
+              ("2026-09-10T08:00:00+09:00", "2026-09-10T08:00:05+09:00"))
+    c.commit()
+    c.close()
+    now = dt.datetime.fromisoformat("2026-09-10T12:00:00+09:00")
+    # 마감 없는 '사무실 이전' 이 남아 있으므로 그건 지운다
+    c = repo.connect(db)
+    c.execute("DELETE FROM council_post WHERE deadline IS NULL")
+    c.commit()
+    c.close()
+    t = _text(server.handle(db, None, _pay("총학 공지"), now=now))
+    assert "지금 진행 중인" in t
+    assert "못 가져왔어요" not in t
+
+
+def test_교내행사는_분류로_뽑는다(tmp_path):
+    """★ 학교 공지를 섞지 않는다 — 낱말 목록을 지어내면 그게 추측이다."""
+    p, c = _db_cat(tmp_path)
+    c.execute("""INSERT INTO crawl_run (id, source_key, started_at,
+                 finished_at, outcome)
+                 VALUES ('r','council_sheet','2026-08-14T09:00:00+09:00',
+                         '2026-08-14T09:00:05+09:00','success')""")
+    c.commit()
+    c.close()
+    t = _text(server.handle(p, None, _pay("교내 행사"), now=NOW))
+    assert "학문체 댄스제" in t
+    assert "총학 주관 이력서 특강" not in t, "다른 분류가 섞였다"
+    assert "분류를 안 적은 글" not in t
+
+
+def test_교내행사_별칭이_붙는다():
+    def route(u):
+        return server.route_of({"userRequest": {"utterance": u},
+                                "action": {"params": {}}})[0]
+    for u in ("교내 행사", "교내행사", "학교 행사", "무슨 행사"):
+        assert route(u) == "council.event", u

@@ -502,7 +502,7 @@ def route_of(payload: dict, block_name: str | None = None) -> tuple[str, str]:
         return "manual", manual.key
 
     if handler in ("welcome", "info.search", "notice.search",
-                   "council.notice", "career.list"):
+                   "council.notice", "career.list", "council.event"):
         return handler, via
 
     if routing.is_fallback(payload, path_block=block_name):
@@ -574,6 +574,8 @@ def handle(db_path: pathlib.Path, block_name: str | None, payload: dict,
 
     if route == "career.list":
         return _handle_career(db_path, now=now)
+    if route == "council.event":
+        return _handle_council_category(db_path, "교내행사", "교내 행사", now=now)
     # ★ 총학 공지가 학교 공지 검색보다 **먼저**다.
     #   총학이 직접 넣은 것이라 크롤 결과보다 근거가 세다 —
     #   '학점포기 없음' 과 같은 자리다 (T4).
@@ -608,6 +610,39 @@ def handle(db_path: pathlib.Path, block_name: str | None, payload: dict,
     #   확신할 때만 답하고, 아니면 폴백 + 이름을 기록한다.
     answered = _handle_section(db_path, utterance, only_confident=True)
     return answered if answered is not None else templates.render_fallback()
+
+
+def _handle_council_category(db_path: pathlib.Path, category: str,
+                             label: str, *,
+                             now: dt.datetime | None = None) -> dict:
+    """시트 분류로 뽑는다 — **사람이 적은 것만.**
+
+    ★ 학교 공지를 섞지 않는다
+      '교내행사' 낱말 목록을 우리가 지어내면 그게 추측이다
+      (laws.jbnu.ac.kr · 교내공지에서 이미 틀렸다).
+      총학이 분류를 적은 글만 낸다. 없으면 없다고 한다.
+    """
+    now = now or now_kst()
+    today = now.date().isoformat()
+    conn = repo.connect(db_path, readonly=True)
+    try:
+        posts = repo.council_by_category(conn, category, today=today)
+        have_any = repo.council_total(conn)
+        row = conn.execute(
+            """SELECT MAX(started_at) FROM crawl_run
+                WHERE source_key = 'council_sheet' AND outcome = 'success'"""
+        ).fetchone()
+        last_ok = row[0] if row else None
+    finally:
+        conn.close()
+    stale = (last_ok is None
+             or repo.staleness_hours(last_ok, now) > COUNCIL_STALE_HOURS)
+    log.info("[council] 분류=%s %s건 stale=%s", category, len(posts), stale)
+    if posts:
+        return templates.render_council(posts)
+    if have_any and not stale:
+        return templates.render_council_none_active(label)
+    return templates.render_council_empty(stale=stale)
 
 
 CAREER_DAYS = 30
@@ -708,6 +743,9 @@ def _handle_council(db_path: pathlib.Path, utterance: str, *,
     log.info("[council] posts=%s last_ok=%s stale=%s tokens=%s",
              len(posts), last_ok, stale, tokens)
     if not posts:
+        if have_any and not stale and not asked_specific:
+            # 읽었고 글도 있는데 전부 마감이 지났다 — '못 가져왔다' 가 아니다
+            return templates.render_council_none_active()
         if asked_specific and have_any:
             # 시트는 읽었고 글도 있다. 다만 물은 게 없다 — 그 사실을 그대로 말한다.
             return templates.render_council_missing(

@@ -115,6 +115,26 @@ def _record_fetch_failure(conn, source_key: str, err: Exception) -> None:
 
 def run_source(conn, source_key: str, cfg: dict, *, date: str | None,
                dry_run: bool, force: bool) -> None:
+    # ★ 작업(job) 원천은 여기로도 들어온다 (2026-08-14)
+    #   council_sheet 는 parser 가 아니라 job 으로 돈다. 스케줄러는 그 갈래를
+    #   알지만 이 CLI 는 몰라서 **"파서 미구현 — 건너뜀"** 을 찍었다.
+    #   파서는 있는데 명령이 거짓말을 한 것이고,
+    #   그 말을 본 사람은 '아직 안 만들었구나' 로 읽는다 — 실제로 그랬다.
+    #   ★ 들어오는 문이 둘이면 **둘 다 같은 답을 해야 한다.**
+    job = cfg.get("job")
+    if job:
+        from crawler import jobs as jobs_mod
+        fn = jobs_mod.JOBS.get(job)
+        if fn is None:
+            print(f"  [{source_key}] 모르는 작업 job={job!r} — 건너뜀")
+            return
+        if dry_run:
+            print(f"  [{source_key}] [dry-run] job={job} 은 여기서 안 돌린다")
+            return
+        out = fn(str(DB_PATH), cfg, dt.datetime.now(_KST))
+        print(f"  [{source_key}] job={job} → {out}")
+        return
+
     parser = PARSERS.get(cfg.get("parser"))
     if parser is None:
         print(f"  [{source_key}] 파서 미구현 — 건너뜀")

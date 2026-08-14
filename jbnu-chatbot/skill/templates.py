@@ -1049,6 +1049,26 @@ def render_council_missing(subject: str, *,
          kakao.quick_reply("처음으로")])
 
 
+def render_council_none_active(label: str = "총학 공지", *,
+                               instagram: str = COUNCIL_INSTAGRAM) -> dict:
+    """시트는 최신인데 **진행 중인 게 없다.**
+
+    ★ '못 가져왔다' 라고 하면 틀린 말이다
+      가져왔다. 다만 올라온 글의 마감이 전부 지났다.
+      우리 사정(못 읽음)과 학교 사정(지금은 없음)을 섞으면
+      학생이 어디를 봐야 할지 못 정한다 — 갈래를 늘리는 이유가 그것이다.
+
+      못 가져왔다   시트를 못 읽었다              → 인스타를 보세요
+      진행 중 없음   읽었는데 마감이 다 지났다       → 새로 올라오면 여기 나와요
+    """
+    return kakao.response(
+        [kakao.text_card(
+            f"지금 진행 중인 {label}가 없어요.",
+            "새로 올라오면 여기서 바로 보여드릴게요.",
+            buttons=[kakao.web_button("총학 인스타 열기", instagram)])],
+        [kakao.quick_reply("처음으로")])
+
+
 def render_council_empty(*, stale: bool = False,
                          instagram: str = COUNCIL_INSTAGRAM) -> dict:
     """총학 공지가 후보에 하나도 없을 때.
