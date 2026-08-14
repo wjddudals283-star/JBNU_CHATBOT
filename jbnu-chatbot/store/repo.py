@@ -1599,12 +1599,14 @@ def upsert_council_posts(conn: sqlite3.Connection, rows: Sequence[dict], *,
         conn.execute(
             """INSERT INTO council_post
                  (post_key, published_at, title, body, link, deadline, bureau,
-                  row_no, source_id, source_url, observed_at)
+                  categories, row_no, source_id, source_url, observed_at)
                VALUES (:post_key, :published_at, :title, :body, :link,
-                       :deadline, :bureau, :row_no, :sid, :surl, :obs)
+                       :deadline, :bureau, :categories, :row_no,
+                       :sid, :surl, :obs)
                ON CONFLICT(post_key) DO UPDATE SET
                  body=excluded.body, link=excluded.link,
                  deadline=excluded.deadline, bureau=excluded.bureau,
+                 categories=excluded.categories,
                  row_no=excluded.row_no, observed_at=excluded.observed_at""",
             {**r, "sid": source_id, "surl": source_url, "obs": observed_at})
     old = [k for (k,) in conn.execute("SELECT post_key FROM council_post")
@@ -1721,3 +1723,68 @@ def council_total(conn: sqlite3.Connection) -> int:
         return conn.execute("SELECT COUNT(*) FROM council_post").fetchone()[0]
     except sqlite3.OperationalError:
         return 0
+
+
+def council_by_category(conn: sqlite3.Connection, category: str, *,
+                        today: str, limit: int = 5) -> list[dict[str, Any]]:
+    """분류가 붙은 글만. **사람이 적은 것만 믿는다.**
+
+    ★ 제목·본문으로 추측하지 않는다
+      추측이 틀린 전례가 둘 있다 —
+        laws.jbnu.ac.kr   학칙인 줄 알았는데 법무대학원이었다
+        교내공지          총학 게시물이 0건이었다
+      이름이 그럴듯하다고 내용이 그런 건 아니다.
+      분류 칸이 비어 있으면 **그 글은 안 나온다.** 그게 맞다 —
+      총학이 안 적은 것을 우리가 정하면 T4 의 신뢰가 무너진다.
+
+    쉼표로 여러 개가 올 수 있어서 저장은 원문, 쪼개는 건 여기서 한다.
+    """
+    want = category.strip()
+    if not want:
+        return []
+    try:
+        rows = conn.execute(
+            """SELECT * FROM council_post
+                WHERE categories <> ''
+                  AND (deadline IS NULL OR deadline >= ?)
+                ORDER BY published_at DESC LIMIT 200""", (today,)).fetchall()
+    except sqlite3.OperationalError as e:
+        log.warning("[council] 분류 조회 실패 — %s", e)
+        return []
+    out = []
+    for r in rows:
+        cats = [c.strip() for c in (r["categories"] or "").split(",")]
+        if want in cats:
+            out.append(dict(r))
+        if len(out) >= limit:
+            break
+    return out
+
+
+# 대표 정의(2026-08-14) 그대로. 우리가 상상한 목록이 아니다.
+CAREER_WORDS = ("특강", "캠프", "멘토링", "자격증", "인턴", "공모전", "어학",
+                "취업동아리", "현장실습", "아카데미", "워크숍", "워크샵",
+                "설명회", "박람회", "채용", "취업")
+
+
+def recent_career_notices(conn: sqlite3.Connection, *, since: str,
+                          limit: int = 10) -> list[dict[str, Any]]:
+    """최근 취업·비교과 공지.
+
+    ★ '지금 신청 가능' 이 아니다. **게시일**로 자른 것이다.
+      notice_item 에는 마감일이 없다 — 마감은 제목·본문에 글로 적혀 있고
+      우리는 본문을 안 읽는다. 문안이 그 사실을 그대로 말한다.
+    """
+    like = " OR ".join(["title LIKE ?"] * len(CAREER_WORDS))
+    args = [f"%{w}%" for w in CAREER_WORDS]
+    try:
+        rows = conn.execute(
+            f"""SELECT title, url, published_at, board_name, site_name
+                  FROM notice_item
+                 WHERE ({like}) AND published_at >= ?
+                 ORDER BY published_at DESC LIMIT ?""",
+            (*args, since, limit)).fetchall()
+    except sqlite3.OperationalError as e:
+        log.warning("[career] 조회 실패 — %s", e)
+        return []
+    return [dict(r) for r in rows]

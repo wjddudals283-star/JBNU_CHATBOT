@@ -33,6 +33,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from skill import routing  # noqa: E402
+from skill.section_search import site_aliases  # noqa: E402
 from store import repo     # noqa: E402
 
 HANGUL = re.compile(r"[가-힣]")
@@ -108,6 +109,57 @@ def main(argv: list[str] | None = None) -> int:
         print(f"\n  [{alias}] → {handler}   {total}회")
         for ctx, n in ctr.most_common(4):
             print(f"       {n:4}회  …{ctx}…")
+
+    # ═══════════════════════════════════════════════════════════
+    # 두 번째 종류 — **사이트 별칭이 질문의 낱말을 먹는다**
+    # ═══════════════════════════════════════════════════════════
+    # ★ 세 번 나왔다. 개별로 고치면 네 번째는 개강 뒤에 나온다.
+    #     학자금 대출          사이트 별칭에 먹혔다
+    #     컴퓨터인공지능학부     별칭이 낱말 안쪽에 걸렸다 (위 검사)
+    #     취업                career.jbnu.ac.kr 별칭에 먹혔다 —
+    #                        그 사이트 공지는 0건인데 거기로 좁혀서
+    #                        제목에 '취업' 이 든 공지 139건을 0건으로 만들었다
+    #
+    # ★ 재는 방법: 별칭이 **자기 사이트 밖에서 얼마나 쓰이나**
+    #   '취업' 은 취업진로지원과의 이름이면서 891건의 공지 제목에 든 말이다.
+    #   그런 별칭은 좁히는 순간 질문을 잘못된 곳으로 보낸다.
+    print("\n" + "═" * 74)
+    print("사이트 별칭이 질문의 낱말을 먹는가")
+    print("═" * 74)
+    conn2 = repo.connect(pathlib.Path(args.db), readonly=True)
+    try:
+        rows = []
+        for alias, host in sorted(site_aliases().items()):
+            if len(alias) < 2:
+                continue
+            try:
+                outside = conn2.execute(
+                    "SELECT COUNT(*) FROM notice_item "
+                    "WHERE title LIKE ? AND host <> ?",
+                    (f"%{alias}%", host)).fetchone()[0]
+                own = repo.notice_total(conn2, host=host)
+            except Exception:  # noqa: BLE001
+                continue
+            if outside:
+                rows.append((alias, host, outside, own))
+        rows.sort(key=lambda r: -r[2])
+        print(f"\n{'별칭':12} {'좁혀갈 사이트':26} "
+              f"{'밖에서 쓰인 공지':>10} {'그 사이트 공지':>10}")
+        print("─" * 74)
+        for alias, host, outside, own in rows[:15]:
+            mark = "  ★ 그 사이트엔 공지가 없다" if own == 0 else ""
+            print(f"{alias:12} {host[:25]:26} {outside:>10,} {own:>10,}{mark}")
+        blind = [r for r in rows if r[3] == 0]
+        print()
+        if blind:
+            print(f"★ 공지 0건짜리 사이트로 좁히는 별칭 {len(blind)}종 — "
+                  f"공지 검색에서는 좁히기가 취소된다")
+            for alias, host, outside, _own in blind[:8]:
+                print(f"    {alias:12} → {host:26} (밖에서 {outside:,}건)")
+        else:
+            print("★ 공지 0건짜리 사이트로 좁히는 별칭 없음")
+    finally:
+        conn2.close()
 
     # 지금 규칙이 실제로 막고 있는지 확인한다 — 주장하지 않고 눌러 본다
     #

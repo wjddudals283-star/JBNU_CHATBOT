@@ -1127,3 +1127,69 @@ def render_council(posts: list[dict], *, utterance: str = "",
         card, _ = kakao.list_card("다른 총학 공지", items)
         outputs.append(card)
     return kakao.response(outputs, qr)
+
+
+# ═══════════════════════════════════════════════════════════════
+# 취업·비교과 — "지금 신청할 수 있는 것" 의 목록
+# ═══════════════════════════════════════════════════════════════
+# ★ 대표 정의 (2026-08-14, 그대로 옮김)
+#   "여기서 말한 취업은 채용도 말하는거지만 대부분 취업에 도움되는 활동들"
+#   특강·캠프·멘토링·자격증·인턴십·공모전·어학·현장실습·설명회·박람회 + 채용 일부
+#
+# ★ 전화번호 표가 나가고 있었다
+#   career.jbnu.ac.kr 의 **페이지**만 우리에게 있어서다.
+#   그 사이트 게시판은 43개 중 25개가 로그인 뒤에 있다 (전수 확인) —
+#   안 긁은 게 아니라 못 긁는다. 그건 우회할 선이 아니다.
+#   대신 학과·본부 게시판에 891건이 있다. 그걸 쓴다.
+
+CAREER_RECENT_DAYS = 30
+
+
+def render_career(notices: list, council: list, *, days: int = CAREER_RECENT_DAYS,
+                  instagram: str = COUNCIL_INSTAGRAM) -> dict:
+    """최근 취업·비교과 공지 목록.
+
+    ★ '지금 신청 가능' 이라고 부르지 않는다 — **우리는 마감을 모른다**
+      학교 공지 자료에는 게시일만 있다. 마감은 제목·본문에 글로 적혀 있고
+      우리는 본문을 안 읽는다. 게시일 30일을 '신청 가능' 이라고 부르면
+      모르는 걸 아는 척하는 것이다.
+      학식 stale · 총학 '못 가져왔어요' 와 같은 자리다.
+
+    ★ 총학 시트 글은 마감을 안다 — 그것만 마감을 적는다.
+      아는 것과 모르는 것을 한 줄에 섞지 않는다.
+    """
+    if not notices and not council:
+        return kakao.response(
+            [kakao.text_card(
+                f"최근 {days}일 안에 올라온 취업·비교과 공지를 못 찾았어요.",
+                "총학 인스타나 학교 공지에서 확인해 주세요.",
+                buttons=[kakao.web_button("총학 인스타 열기", instagram)])],
+            [kakao.quick_reply("처음으로")])
+
+    items = []
+    for p in council:            # ★ 총학이 직접 넣은 것이 먼저다 (T4)
+        desc = (f"마감 {date_label(p['deadline'])} · 총학생회"
+                if p.get("deadline") else "총학생회")
+        item = {"title": p["title"], "description": desc}
+        if p.get("link"):
+            item["link"] = p["link"]
+        items.append(item)
+    for n in notices:
+        d = (n.get("published_at") or "")[:10]
+        item = {"title": n["title"],
+                "description": f"{date_label(d)} 게시" if d else
+                               (n.get("board_name") or "")}
+        if n.get("url"):
+            item["link"] = n["url"]
+        items.append(item)
+
+    card, dropped = kakao.list_card(
+        f"최근 {days}일 취업·비교과 공지", items[:kakao.MAX_LIST_ITEMS])
+    tail = [f"최근 {days}일 안에 올라온 취업 관련 공지예요.",
+            "마감은 각 공지에서 확인해 주세요."]
+    if dropped:
+        tail.insert(1, f"({len(items)}건 중 {len(items) - dropped}건만 보여드려요)")
+    return kakao.response(
+        [card, kakao.simple_text("\n".join(tail))],
+        [kakao.quick_reply("총학 공지", "총학 공지"),
+         kakao.quick_reply("처음으로")])

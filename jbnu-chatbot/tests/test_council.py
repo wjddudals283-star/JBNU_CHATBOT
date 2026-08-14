@@ -429,3 +429,130 @@ def test_못_찾았을_때도_전체를_볼_길을_연다(tmp_path):
     r = server.handle(db, None, _pay("총학 장학금 공지"), now=NOW)
     labels = [q["label"] for q in r["template"]["quickReplies"]]
     assert "총학 공지 전체" in labels
+
+
+# ═══════════════════════════════════════════════════════════════
+# 분류 — 사람이 적은 것만 믿는다
+# ═══════════════════════════════════════════════════════════════
+
+CSV_CAT = """게시일,분류,제목,내용,인스타링크,마감일,작성국
+2026-08-13,취업·비교과,총학 주관 이력서 특강,본문,https://x/a,2026-08-27,복지국
+2026-08-12,교내행사,학문체 댄스제,본문,https://x/b,2026-08-25,문화국
+2026-08-11,,분류를 안 적은 글,취업 특강 관련 내용입니다,https://x/c,,사무국
+2026-08-10,"교내행사, 취업·비교과",진로 박람회,본문,https://x/d,2026-08-30,홍보국
+"""
+
+
+def _db_cat(tmp_path):
+    p = tmp_path / "cat.db"
+    c = repo.connect(p)
+    repo.init_db(c)
+    c.execute("""INSERT INTO source_snapshot (id, source_key, url, fetched_at,
+                 http_status, content_hash, content_path, media_type)
+                 VALUES ('s','council_sheet','https://x',
+                         '2026-08-14T09:00:00+09:00',200,'h','','html')""")
+    parsed = council_sheet.parse(CSV_CAT, today=TODAY)
+    repo.upsert_council_posts(c, parsed.rows, source_id="s",
+                              source_url="https://x",
+                              observed_at="2026-08-14T09:00:00+09:00")
+    c.commit()
+    return p, c
+
+
+def test_분류는_사람이_적은_것만_믿는다(tmp_path):
+    """★ 제목·본문으로 추측하지 않는다.
+
+    추측이 틀린 전례가 둘 있다 —
+      laws.jbnu.ac.kr   학칙인 줄 알았는데 법무대학원이었다
+      교내공지          총학 게시물이 0건이었다
+    '분류를 안 적은 글' 은 본문에 '취업 특강' 이 있어도 **안 나온다.**
+    총학이 안 적은 것을 우리가 정하면 T4 의 신뢰가 무너진다.
+    """
+    _p, c = _db_cat(tmp_path)
+    try:
+        got = repo.council_by_category(c, "취업·비교과", today="2026-08-14")
+        titles = [r["title"] for r in got]
+    finally:
+        c.close()
+    assert "총학 주관 이력서 특강" in titles
+    assert "분류를 안 적은 글" not in titles, "본문으로 추측하면 안 된다"
+    assert "학문체 댄스제" not in titles
+
+
+def test_분류는_쉼표로_여러_개(tmp_path):
+    _p, c = _db_cat(tmp_path)
+    try:
+        career = [r["title"] for r in
+                  repo.council_by_category(c, "취업·비교과", today="2026-08-14")]
+        event = [r["title"] for r in
+                 repo.council_by_category(c, "교내행사", today="2026-08-14")]
+    finally:
+        c.close()
+    assert "진로 박람회" in career and "진로 박람회" in event
+
+
+def test_분류_조회도_마감을_지킨다(tmp_path):
+    _p, c = _db_cat(tmp_path)
+    try:
+        got = repo.council_by_category(c, "취업·비교과", today="2026-09-10")
+    finally:
+        c.close()
+    assert got == []
+
+
+def test_분류_칸이_없어도_파싱은_된다():
+    """총학이 아직 칸을 안 넣었을 수도 있다 — 그때도 나머지는 읽는다."""
+    parsed = council_sheet.parse(CSV, today=TODAY)
+    assert parsed.rows and parsed.rows[0]["categories"] == ""
+
+
+# ═══════════════════════════════════════════════════════════════
+# 취업·비교과 — 못 세는 것을 못 센다고 말한다
+# ═══════════════════════════════════════════════════════════════
+
+def test_지금_신청_가능이라고_부르지_않는다():
+    """★ 우리는 학교 공지의 마감을 모른다.
+
+    notice_item 에는 게시일만 있고, 마감은 제목·본문에 글로 적혀 있는데
+    우리는 본문을 안 읽는다. 게시일 30일을 '신청 가능' 이라고 부르면
+    모르는 걸 아는 척하는 것이다.
+    """
+    r = templates.render_career(
+        [{"title": "취업 특강 안내", "url": "https://x",
+          "published_at": "2026-08-13", "board_name": "교내공지"}], [])
+    t = _text(r)
+    assert "신청 가능" not in t and "신청할 수 있" not in t
+    assert "최근 30일 안에 올라온 취업 관련 공지예요." in t
+    assert "마감은 각 공지에서 확인해 주세요." in t
+
+
+def test_마감을_아는_건_총학_시트뿐이다():
+    """아는 것과 모르는 것을 한 줄에 섞지 않는다."""
+    r = templates.render_career(
+        [{"title": "학교 공지", "url": "https://x",
+          "published_at": "2026-08-13", "board_name": "교내공지"}],
+        [{"title": "총학 특강", "link": "https://y", "deadline": "2026-08-27",
+          "published_at": "2026-08-13"}])
+    items = [o["listCard"]["items"] for o in r["template"]["outputs"]
+             if "listCard" in o][0]
+    by = {i["title"]: i["description"] for i in items}
+    assert "마감" in by["총학 특강"]
+    assert "마감" not in by["학교 공지"], "모르는 마감을 적으면 안 된다"
+
+
+def test_총학_시트가_먼저_나온다():
+    """T4 가 크롤보다 무겁다 — 목록에서도 그렇다."""
+    r = templates.render_career(
+        [{"title": "학교 공지", "url": "https://x",
+          "published_at": "2026-08-13", "board_name": "교내공지"}],
+        [{"title": "총학 특강", "link": "https://y", "deadline": None,
+          "published_at": "2026-08-13"}])
+    items = [o["listCard"]["items"] for o in r["template"]["outputs"]
+             if "listCard" in o][0]
+    assert items[0]["title"] == "총학 특강"
+
+
+def test_하나도_없으면_인스타로_보낸다():
+    r = templates.render_career([], [])
+    assert kakao.validate(r) == []
+    assert "못 찾았어요" in _text(r)

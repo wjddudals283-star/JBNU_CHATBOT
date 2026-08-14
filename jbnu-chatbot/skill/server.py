@@ -502,7 +502,7 @@ def route_of(payload: dict, block_name: str | None = None) -> tuple[str, str]:
         return "manual", manual.key
 
     if handler in ("welcome", "info.search", "notice.search",
-                   "council.notice"):
+                   "council.notice", "career.list"):
         return handler, via
 
     if routing.is_fallback(payload, path_block=block_name):
@@ -572,6 +572,8 @@ def handle(db_path: pathlib.Path, block_name: str | None, payload: dict,
                      manual.verified_at)
             return templates.render_manual(manual, utterance=utterance)
 
+    if route == "career.list":
+        return _handle_career(db_path, now=now)
     # ★ 총학 공지가 학교 공지 검색보다 **먼저**다.
     #   총학이 직접 넣은 것이라 크롤 결과보다 근거가 세다 —
     #   '학점포기 없음' 과 같은 자리다 (T4).
@@ -606,6 +608,35 @@ def handle(db_path: pathlib.Path, block_name: str | None, payload: dict,
     #   확신할 때만 답하고, 아니면 폴백 + 이름을 기록한다.
     answered = _handle_section(db_path, utterance, only_confident=True)
     return answered if answered is not None else templates.render_fallback()
+
+
+CAREER_DAYS = 30
+
+
+def _handle_career(db_path: pathlib.Path, *,
+                   now: dt.datetime | None = None) -> dict:
+    """취업·비교과 — 최근에 올라온 것 목록.
+
+    ★ 원천 셋을 합치려 했는데 하나가 못 쓴다 (2026-08-14 전수 확인)
+      career.jbnu.ac.kr 게시판 43개 중 25개가 **로그인 뒤**에 있다.
+      안 긁은 게 아니라 못 긁는다 — 우회할 선이 아니다.
+      남은 둘로 간다: 학교 공지(학과·본부) + 총학 시트(분류=취업·비교과).
+
+    ★ 총학 시트가 먼저다 (T4). 그리고 **마감을 아는 건 시트뿐**이다.
+    """
+    now = now or now_kst()
+    today = now.date()
+    since = (today - dt.timedelta(days=CAREER_DAYS)).isoformat()
+    conn = repo.connect(db_path, readonly=True)
+    try:
+        council = repo.council_by_category(
+            conn, "취업·비교과", today=today.isoformat())
+        notices = repo.recent_career_notices(conn, since=since)
+    finally:
+        conn.close()
+    log.info("[career] 총학 %s건 · 학교공지 %s건 (최근 %s일)",
+             len(council), len(notices), CAREER_DAYS)
+    return templates.render_career(notices, council, days=CAREER_DAYS)
 
 
 COUNCIL_STALE_HOURS = 24.0

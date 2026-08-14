@@ -599,6 +599,13 @@ CREATE TABLE IF NOT EXISTS council_post (
   link         TEXT NOT NULL DEFAULT '',  -- 인스타 permalink
   deadline     TEXT,                      -- 마감일. 없으면 NULL — 지어내지 않는다.
   bureau       TEXT NOT NULL DEFAULT '',  -- 작성국
+  -- ★ 분류는 **사람이 적은 것만** 믿는다. 제목·본문으로 추측하지 않는다.
+  --   추측이 틀린 전례가 둘 있다 —
+  --     laws.jbnu.ac.kr   학칙인 줄 알았는데 법무대학원이었다
+  --     교내공지          총학 게시물이 0건이었다
+  --   이름이 그럴듯하다고 내용이 그런 건 아니다.
+  --   쉼표로 여러 개. 저장은 원문 그대로, 조회할 때 쪼갠다.
+  categories   TEXT NOT NULL DEFAULT '',
   row_no       INTEGER NOT NULL DEFAULT 0,-- 시트 행 번호. 문제 생기면 여기를 본다.
 
   source_id         TEXT NOT NULL REFERENCES source_snapshot(id),

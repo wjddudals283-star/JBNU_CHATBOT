@@ -1,7 +1,7 @@
 """총학 공지·행사 구글시트 (T4).
 
     시트   전북대 총학 챗봇 · 총학 공지·행사 입력
-    칸     게시일 | 제목 | 내용 | 인스타링크 | 마감일 | 작성국
+    칸     게시일 | 분류 | 제목 | 내용 | 인스타링크 | 마감일 | 작성국
 
 ★ 왜 시트인가 — 인스타 API 를 접었다
   Graph API 는 앱 심사·토큰 60일 만료·페이스북 페이지 연결이 따라온다.
@@ -34,6 +34,7 @@ from typing import Any
 # ★ 위치로 읽으면 칸 하나만 옮겨도 조용히 어긋난다.
 HEADERS = {
     "게시일": "published_at",
+    "분류": "categories",
     "제목": "title",
     "내용": "body",
     "인스타링크": "link",
@@ -151,6 +152,9 @@ def parse(text: str, *, today: dt.date | None = None) -> ParsedSheet:
             "body": get("body"),          # ★ 원문 그대로. 자르지도 다듬지도 않는다.
             "link": get("link"),
             "deadline": dl,
+            # ★ 사람이 적은 그대로 싣는다. 비었으면 빈 채로 둔다 —
+            #   제목을 보고 '이건 취업이겠지' 하고 채우면 그게 추측이다.
+            "categories": get("categories"),
             "bureau": get("bureau"),
             "row_no": n,
         })
