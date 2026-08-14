@@ -570,3 +570,52 @@ CREATE TABLE IF NOT EXISTS page_change (
   PRIMARY KEY (page_url, changed_at)
 );
 CREATE INDEX IF NOT EXISTS idx_change_page ON page_change(page_url, changed_at);
+
+
+-- ═══════════════════════════════════════════════════════════════
+-- 총학 공지·행사 (T4 — 총학이 구글시트에 직접 넣는다)
+-- ═══════════════════════════════════════════════════════════════
+-- ★ 왜 별도 테이블인가
+--   manual_answers 는 '질문 → 답' 매핑이다. 이건 **피드**다.
+--   같은 T4 지만 모양이 다르다. 억지로 합치면 둘 다 이상해진다.
+--
+-- ★ 신뢰 등급은 크롤보다 높다
+--   총학이 직접 확인해 넣은 것이다 — '학점포기 없음' 과 같은 자리다.
+--   그래서 tier T4 이고, 답변에서 크롤 결과보다 먼저 나간다.
+--
+-- ★ deadline 이 지나면 후보에서 뺀다 (지우지 않는다)
+--   9월에 "8월 25일까지 신청하세요" 가 나가면 크롤 오답보다 나쁘다 —
+--   총학이 직접 넣은 것이라 학생이 더 믿는다.
+--   행은 남긴다. 지운 것과 지난 것은 다른 사실이고, 나중에 왜 안 나갔는지 봐야 한다.
+--
+-- ★ body 는 인스타 캡션 원문이다. 요약하지 않는다.
+--   8/14 에 자족성 판정기로 확인했다 — 날짜·대상·방법·금액·마감시각이 전부 있다.
+--   우리가 줄이면 그 값들이 사라진다.
+CREATE TABLE IF NOT EXISTS council_post (
+  post_key     TEXT PRIMARY KEY,          -- 게시일+제목 해시. 시트에 행 ID가 없다.
+  published_at TEXT NOT NULL,             -- 게시일 (YYYY-MM-DD)
+  title        TEXT NOT NULL,
+  body         TEXT NOT NULL DEFAULT '',  -- 인스타 캡션 원문. 그대로.
+  link         TEXT NOT NULL DEFAULT '',  -- 인스타 permalink
+  deadline     TEXT,                      -- 마감일. 없으면 NULL — 지어내지 않는다.
+  bureau       TEXT NOT NULL DEFAULT '',  -- 작성국
+  row_no       INTEGER NOT NULL DEFAULT 0,-- 시트 행 번호. 문제 생기면 여기를 본다.
+
+  source_id         TEXT NOT NULL REFERENCES source_snapshot(id),
+  source_url        TEXT NOT NULL,
+  observed_at       TEXT NOT NULL,
+  confidence        REAL NOT NULL DEFAULT 1.0,
+  extraction_method TEXT NOT NULL DEFAULT 'manual_admin',
+  status            TEXT NOT NULL DEFAULT 'verified',
+  tier              TEXT NOT NULL DEFAULT 'T4'
+);
+
+CREATE INDEX IF NOT EXISTS idx_council_pub ON council_post(published_at DESC);
+CREATE INDEX IF NOT EXISTS idx_council_dl  ON council_post(deadline);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS council_post_fts USING fts5(
+  post_key UNINDEXED,
+  title,
+  body,
+  tokenize = 'trigram'
+);

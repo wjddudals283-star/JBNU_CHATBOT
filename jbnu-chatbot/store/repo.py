@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import logging
 import pathlib
 import re
 import sqlite3
@@ -28,6 +29,8 @@ SCHEMA_PATH = pathlib.Path(__file__).with_name("schema.sql")
 VERIFIED = "verified"
 
 # 신선도 게이트 (01_설계.md §6). 단위: 시간
+log = logging.getLogger("jbnu.store")
+
 MAX_STALENESS_HOURS: dict[str, float] = {
     "meal_service": 24,
     "notice": 6,
@@ -1565,3 +1568,146 @@ def crawl_progress(conn: sqlite3.Connection, source_key: str = "jbnu_pages",
             "pages_done": done, "pages_total": total_hint,
             "detail": ("아직 도는 중이거나 중간에 멈췄다. "
                        "started_at 이 오래됐으면 멈춘 것이다.")}
+
+
+# ═══════════════════════════════════════════════════════════════
+# 총학 공지·행사 (T4 — 구글시트)
+# ═══════════════════════════════════════════════════════════════
+
+def upsert_council_posts(conn: sqlite3.Connection, rows: Sequence[dict], *,
+                         source_id: str, source_url: str,
+                         observed_at: str) -> int:
+    """시트 한 판을 통째로 반영한다.
+
+    ★ 시트에서 지운 줄은 여기서도 사라져야 한다
+      총학이 잘못 올린 글을 지웠는데 우리가 계속 내보내면
+      **지울 방법이 없는 챗봇**이 된다. 그래서 이번 판에 없는 행은 지운다.
+      (마감이 지난 것과는 다른 얘기다 — 그건 남기고 조회에서만 뺀다)
+    """
+    keys = {r["post_key"] for r in rows}
+    for r in rows:
+        conn.execute(
+            """INSERT INTO council_post
+                 (post_key, published_at, title, body, link, deadline, bureau,
+                  row_no, source_id, source_url, observed_at)
+               VALUES (:post_key, :published_at, :title, :body, :link,
+                       :deadline, :bureau, :row_no, :sid, :surl, :obs)
+               ON CONFLICT(post_key) DO UPDATE SET
+                 body=excluded.body, link=excluded.link,
+                 deadline=excluded.deadline, bureau=excluded.bureau,
+                 row_no=excluded.row_no, observed_at=excluded.observed_at""",
+            {**r, "sid": source_id, "surl": source_url, "obs": observed_at})
+    old = [k for (k,) in conn.execute("SELECT post_key FROM council_post")
+           if k not in keys]
+    for k in old:
+        conn.execute("DELETE FROM council_post WHERE post_key = ?", (k,))
+    conn.execute("DELETE FROM council_post_fts")
+    conn.execute(
+        """INSERT INTO council_post_fts (post_key, title, body)
+           SELECT post_key, title, body FROM council_post""")
+    return len(rows)
+
+
+def query_council_posts(conn: sqlite3.Connection, *, today: str,
+                        limit: int = 5) -> list[dict[str, Any]]:
+    """지금 학생에게 보여도 되는 총학 공지.
+
+    ★ 마감일이 지난 것은 후보에서 뺀다 — 지우지는 않는다
+      9월에 "8월 25일까지 신청하세요" 가 나가면 크롤 오답보다 나쁘다.
+      총학이 직접 넣은 것이라 학생이 더 믿기 때문이다.
+      행은 남긴다 — 지운 것과 지난 것은 다른 사실이고,
+      나중에 '왜 안 나갔지' 를 물을 때 볼 수 있어야 한다.
+
+    ★ 마감일이 없는 글은 남는다
+      마감이 없는 안내(예: 사무실 이전)가 있다. NULL 을 '지났다' 로 보면
+      그런 글이 영영 안 나간다. 없는 것과 지난 것은 다르다.
+    """
+    try:
+        rows = conn.execute(
+            """SELECT * FROM council_post
+                WHERE deadline IS NULL OR deadline >= ?
+                ORDER BY published_at DESC, row_no DESC
+                LIMIT ?""", (today, limit)).fetchall()
+    except sqlite3.OperationalError as e:
+        log.warning("[council] 조회 실패 — %s", e)
+        return []
+    return [dict(r) for r in rows]
+
+
+def search_council_posts(conn: sqlite3.Connection, tokens: Sequence[str], *,
+                         today: str, limit: int = 5) -> list[dict[str, Any]]:
+    """제목·본문에서 찾는다. 마감 필터는 조회와 같은 규칙을 쓴다."""
+    toks = [t for t in tokens if len(t) >= 2]
+    if not toks:
+        return []
+    q = " OR ".join(f'"{t}"' for t in toks)
+    try:
+        hit = conn.execute(
+            """SELECT post_key FROM council_post_fts
+                WHERE council_post_fts MATCH ? LIMIT 50""", (q,)).fetchall()
+    except sqlite3.OperationalError:
+        # ★ trigram 은 2자 미만을 색인하지 않는다. LIKE 로 물러선다 —
+        #   느려도 답이 없는 것보다 낫다 (섹션 검색과 같은 규칙).
+        like = " OR ".join(["title LIKE ? OR body LIKE ?"] * len(toks))
+        args = [x for t in toks for x in (f"%{t}%", f"%{t}%")]
+        hit = conn.execute(
+            f"SELECT post_key FROM council_post WHERE {like} LIMIT 50",
+            args).fetchall()
+    keys = [r[0] for r in hit]
+    if not keys:
+        return []
+    marks = ",".join("?" * len(keys))
+    rows = conn.execute(
+        f"""SELECT * FROM council_post
+             WHERE post_key IN ({marks})
+               AND (deadline IS NULL OR deadline >= ?)
+             ORDER BY published_at DESC LIMIT ?""",
+        (*keys, today, limit)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def council_expired_count(conn: sqlite3.Connection, *, today: str) -> int:
+    """마감이 지나서 안 나가는 글 수. /admin/status 에서 본다."""
+    return conn.execute(
+        "SELECT COUNT(*) FROM council_post WHERE deadline IS NOT NULL "
+        "AND deadline < ?", (today,)).fetchone()[0]
+
+
+def search_council_titles(conn: sqlite3.Connection, tokens: Sequence[str], *,
+                          today: str, limit: int = 5) -> list[dict[str, Any]]:
+    """**제목에서만** 찾는다. 폴백에서 T4 를 앞세울 때 쓴다.
+
+    ★ 본문은 안 본다
+      캡션은 길고 흔한 낱말이 많다 ('신청', '기간', '학생').
+      본문까지 보면 엉뚱한 질문이 총학 공지로 끌려간다.
+      제목은 총학이 그 글을 부르는 이름이라 훨씬 좁다.
+
+    ★ 왜 앞세우나
+      총학이 직접 넣은 것이라 크롤 결과보다 근거가 세다 (T4).
+      학생은 '총학 공지' 라고 안 친다 — '댄스제' 라고 친다.
+      별칭이 걸릴 때만 T4 를 쓰면 등급이 높다는 말이 실제로는 안 지켜진다.
+    """
+    toks = [t for t in tokens if len(t) >= 2]
+    if not toks:
+        return []
+    where = " OR ".join(["title LIKE ?"] * len(toks))
+    try:
+        rows = conn.execute(
+            f"""SELECT * FROM council_post
+                 WHERE ({where}) AND (deadline IS NULL OR deadline >= ?)
+                 ORDER BY published_at DESC LIMIT ?""",
+            (*[f"%{t}%" for t in toks], today, limit)).fetchall()
+    except sqlite3.OperationalError as e:
+        # ★ 표가 아직 없는 DB (배포 직후). 학생에게 500 을 주지 않는다.
+        #   조용히 넘기지는 않는다 — 로그에 남겨야 기동 보장이 깨진 걸 안다.
+        log.warning("[council] 조회 실패 — %s", e)
+        return []
+    return [dict(r) for r in rows]
+
+
+def council_total(conn: sqlite3.Connection) -> int:
+    """시트에서 읽어온 글이 하나라도 있나. '못 가져왔다' 와 '그건 없다' 를 가른다."""
+    try:
+        return conn.execute("SELECT COUNT(*) FROM council_post").fetchone()[0]
+    except sqlite3.OperationalError:
+        return 0

@@ -1016,3 +1016,114 @@ def render_manual(entry, *, utterance: str = "") -> dict:
     return kakao.response(
         [kakao.simple_text("\n".join(lines))],
         [kakao.quick_reply("처음으로")])
+
+
+# ═══════════════════════════════════════════════════════════════
+# 총학 공지·행사 (T4 — 총학이 시트에 직접 넣는다)
+# ═══════════════════════════════════════════════════════════════
+
+COUNCIL_INSTAGRAM = "https://www.instagram.com/jbnu_ch/"
+COUNCIL_BODY_BUDGET = 700       # 카카오 simpleText 상한 안쪽
+
+
+def render_council_missing(subject: str, *,
+                           instagram: str = COUNCIL_INSTAGRAM) -> dict:
+    """시트는 읽었는데 **그 글이 없다.**
+
+    ★ '못 가져왔다' 와 '그건 없다' 는 다른 사실이다
+      시트가 비어 있으면 우리 사정이고, 시트에 글이 있는데 그게 없으면
+      총학이 아직 안 올렸거나 다른 이름으로 올린 것이다.
+      둘을 같은 문장으로 내면 학생이 어디를 봐야 할지 못 정한다.
+
+    ★ 최근 글로 채우지 않는다
+      '장학금 공지' 를 물었는데 '댄스제 모집' 을 보여주면
+      그건 총학이 장학금 공지를 낸 것처럼 읽힌다.
+      학교 공지로 대체하지 않는 것과 **같은 이유**다.
+    """
+    return kakao.response(
+        [kakao.text_card(
+            f"'{subject}' 관련 총학 공지는 아직 못 찾았어요.",
+            "총학 인스타에 올라와 있을 수 있어요.",
+            buttons=[kakao.web_button("총학 인스타 열기", instagram)])],
+        [kakao.quick_reply("총학 공지 전체", "총학 공지"),
+         kakao.quick_reply("처음으로")])
+
+
+def render_council_empty(*, stale: bool = False,
+                         instagram: str = COUNCIL_INSTAGRAM) -> dict:
+    """총학 공지가 후보에 하나도 없을 때.
+
+    ★ '없다' 고 단정하지 않는다. **'우리가 못 가져왔다'** 고 말한다
+      학식 stale 문안과 같은 구조다. 없다의 갈래 중 '못 긁음' 이 이 자리다.
+      진짜로 공지가 없는 건지, 시트를 못 읽은 건지 우리는 구별 못 한다 —
+      구별 못 하는 걸 구별한 척하면 그게 지어내기다.
+
+    ★ 갈 길을 연다
+      총학 공지의 원본은 인스타다. 우리가 못 가져왔으면 거기로 보낸다.
+    """
+    lines = ["최근 총학 공지를 아직 못 가져왔어요.",
+             "총학 인스타를 확인해 주세요."]
+    if stale:
+        # 시트는 읽었는데 오래됐다 — 그 사실까지 밝힌다
+        lines.insert(1, "시트를 마지막으로 읽은 지 오래됐어요.")
+    return kakao.response(
+        [kakao.text_card("\n".join(lines), "",
+                         buttons=[kakao.web_button("총학 인스타 열기", instagram)])],
+        [kakao.quick_reply("처음으로")])
+
+
+def _council_lines(p: dict) -> list[str]:
+    """공지 한 건 → 줄들. ★ 요약하지 않는다.
+
+    캡션은 이미 자족적이다 (8/14 판정기로 확인 — 날짜·대상·방법·금액·마감시각).
+    우리가 줄이면 그 값들이 사라진다. 길면 자르되 **자른 사실을 표시**한다.
+    """
+    out = [f"[{p['title']}]"]
+    body = (p.get("body") or "").strip()
+    if body:
+        if len(body) > COUNCIL_BODY_BUDGET:
+            body = body[:COUNCIL_BODY_BUDGET].rstrip()
+            out += ["", body,
+                    "…(뒷부분이 있어요. 아래 링크에서 전문을 확인해 주세요)"]
+        else:
+            out += ["", body]
+    tail = []
+    if p.get("deadline"):
+        tail.append(f"마감 {date_label(p['deadline'])}")
+    if p.get("bureau"):
+        tail.append(p["bureau"])
+    tail.append(f"{date_label(p['published_at'])} 게시")
+    out += ["", " · ".join(tail)]
+    if p.get("link"):
+        out.append(p["link"])
+    return out
+
+
+def render_council(posts: list[dict], *, utterance: str = "",
+                   instagram: str = COUNCIL_INSTAGRAM) -> dict:
+    """총학 공지 답변.
+
+    ★ 출처를 '총학생회' 라고 밝힌다
+      크롤 인용은 '학교가 이렇게 적어 뒀다' 이고, 이건 '총학이 직접 넣었다' 이다.
+      학생이 두 개를 같은 무게로 읽으면 안 된다 — T4 가 더 무겁다.
+    """
+    if not posts:
+        return render_council_empty(instagram=instagram)
+
+    lines = _council_lines(posts[0])
+    lines += ["", "총학생회가 직접 올린 공지예요."]
+
+    qr = [kakao.quick_reply("처음으로")]
+    outputs: list[dict] = [kakao.simple_text("\n".join(lines))]
+
+    if len(posts) > 1:
+        items = [{"title": p["title"][:kakao.MAX_TITLE]
+                  if hasattr(kakao, "MAX_TITLE") else p["title"],
+                  "description": (f"마감 {date_label(p['deadline'])}"
+                                  if p.get("deadline")
+                                  else f"{date_label(p['published_at'])} 게시"),
+                  **({"link": p["link"]} if p.get("link") else {})}
+                 for p in posts[1:]]
+        card, _ = kakao.list_card("다른 총학 공지", items)
+        outputs.append(card)
+    return kakao.response(outputs, qr)

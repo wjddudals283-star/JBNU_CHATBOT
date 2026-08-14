@@ -54,7 +54,9 @@ def test_폴백이_아닌_블록(name):
     ("오늘 학식", "food.menu.today"),
     ("학식 메뉴 뭐야", "food.menu.today"),
     ("오늘 급식", "food.menu.today"),
-    ("총학 공지", "notice.search"),
+    # ★ 총학 공지는 T4 로 간다 (2026-08-14). 학교 공지 검색이 아니다 —
+    #   총학이 시트에 직접 넣은 것이라 크롤 결과보다 근거가 세다.
+    ("총학 공지", "council.notice"),
     ("학사일정 알려줘", "deadline.upcoming"),
     ("복학 신청", None),          # 아무것도 안 걸리면 안내 검색이 기본
     ("자퇴 절차", None),

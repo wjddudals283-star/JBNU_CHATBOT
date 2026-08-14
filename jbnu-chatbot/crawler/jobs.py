@@ -8,9 +8,10 @@
 from __future__ import annotations
 
 import datetime as dt
+import pathlib
 from typing import Any, Callable
 
-from crawler import notices_run, pages_run
+from crawler import council_run, notices_run, pages_run
 from store import repo
 
 KST = dt.timezone(dt.timedelta(hours=9))
@@ -71,7 +72,13 @@ def run_notices(db_path: str, cfg: dict, now: dt.datetime) -> dict:
         verbose=False, known_only=True))
 
 
+def run_council(db_path: str, cfg: dict, now: dt.datetime) -> Any:
+    """총학 공지 시트. ★ 자기가 crawl_run 을 남기므로 _record 로 감싸지 않는다."""
+    return council_run.run(pathlib.Path(db_path), now=now)
+
+
 JOBS: dict[str, Callable[[str, dict, dt.datetime], Any]] = {
     "pages": run_pages,
     "notices": run_notices,
+    "council": run_council,
 }

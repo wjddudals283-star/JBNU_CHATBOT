@@ -130,6 +130,39 @@ def create_app(db_path: pathlib.Path | None = None, *,
     def conn() -> sqlite3.Connection:
         return repo.connect(app.state.db_path)
 
+    def _ensure_schema() -> None:
+        """새 표가 생겼을 때 **첫 학생이 발견하지 않게** 한다.
+
+        ★ 실제로 터질 뻔했다 (2026-08-14)
+          council_post 를 추가하고 배포하면, 서버 DB 에는 그 표가 없다.
+          수집이 한 번 돌아야 생기는데 그 전에 학생이 검색하면
+          `no such table` 로 **500** 이 난다.
+          스키마는 코드와 함께 배포되지만 **DB 는 디스크에 남아 있다** —
+          이 어긋남을 기동 때 메운다.
+
+        CREATE TABLE IF NOT EXISTS 뿐이라 여러 번 돌아도 안전하다.
+        실패해도 서버는 뜬다 — 답변 경로가 부드럽게 물러서게 해 뒀다.
+
+        ★ **없는 DB 를 만들지는 않는다**
+          경로가 틀렸을 때 빈 DB 를 만들어 버리면 /health 의 warm 이 True 가 되고,
+          '떴다' 와 '답할 준비가 됐다' 를 가르던 계기판이 무뎌진다.
+          그건 설정 문제고, 워밍업이 warm=False 로 말하게 둔다.
+          여기서 고치려는 건 **있는 DB 와 새 코드의 어긋남**뿐이다.
+        """
+        if not pathlib.Path(app.state.db_path).exists():
+            log.info("[schema] DB 파일이 없다 — 만들지 않는다 (%s)",
+                     app.state.db_path)
+            return
+        try:
+            c = repo.connect(app.state.db_path)
+            try:
+                repo.init_db(c)
+                c.commit()
+            finally:
+                c.close()
+        except Exception as e:  # noqa: BLE001
+            log.error("[schema] 보장 실패 — %s: %s", type(e).__name__, e)
+
     def _warmup() -> dict:
         """첫 학생이 침묵을 겪지 않게 미리 한 번 돌려 본다.
 
@@ -168,6 +201,8 @@ def create_app(db_path: pathlib.Path | None = None, *,
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
+        # ★ 스키마를 먼저 맞춘다. 새 표가 없으면 워밍업 질의부터 깨진다.
+        _ensure_schema()
         # ★ 스케줄러보다 **먼저** 데운다.
         #   스케줄러가 기동 즉시 수집을 시작하므로, 순서가 반대면
         #   워밍업 자신이 락을 기다리게 된다.
@@ -390,6 +425,27 @@ def create_app(db_path: pathlib.Path | None = None, *,
 # 처리 본체 (FastAPI 없이도 테스트할 수 있게 분리)
 # ═══════════════════════════════════════════════════════════════
 
+# 총학을 가리키는 말 · 공지를 가리키는 말. 둘 다 있으면 총학 공지를 묻는 것이다.
+_COUNCIL_WHO = re.compile(r"총학|총학생회|학생회")
+_COUNCIL_WHAT = re.compile(r"공지|행사|소식|안내문")
+
+
+def _asks_council(utterance: str) -> bool:
+    """'총학' 과 '공지' 가 **떨어져 있어도** 총학 공지를 묻는 것이다.
+
+    ★ 배포본 실측 (2026-08-14)
+      '총학생회 공지' 가 국제협력과 비자 안내로 갔다. 별칭 '공지' 가 걸려서다.
+      별칭은 **붙어 있는 말**만 잡는다 — '총학 장학금 공지' 는
+      '총학 공지' 를 품고 있지 않아서 '장학금' 이 이겼다.
+
+    ★ 없는 걸 학교 공지로 채우면 총학이 낸 것처럼 보인다
+      학식에서 '자료 없음' 을 '휴무' 로 말한 것과 같은 종류다.
+      총학을 물었으면 총학 자리에서 답하고, 없으면 없다고 한다.
+    """
+    u = utterance or ""
+    return bool(_COUNCIL_WHO.search(u) and _COUNCIL_WHAT.search(u))
+
+
 # 시간을 묻는 말. ★ 언어 표면이지 학교 관측이 아니다 — 조사·인사말과 같은 칸이다.
 _ASKS_WHEN = re.compile(r"언제|며칠|날짜|기간|마감")
 
@@ -445,10 +501,16 @@ def route_of(payload: dict, block_name: str | None = None) -> tuple[str, str]:
     if manual is not None:
         return "manual", manual.key
 
-    if handler in ("welcome", "info.search", "notice.search"):
+    if handler in ("welcome", "info.search", "notice.search",
+                   "council.notice"):
         return handler, via
 
     if routing.is_fallback(payload, path_block=block_name):
+        # ★ 총학을 물었으면 **다른 별칭보다 먼저** 총학 자리로 보낸다.
+        #   '총학 장학금 공지' 가 학교 장학금 안내로 가면, 학생은 그걸
+        #   총학이 낸 것으로 읽는다. 없으면 없다고 말하는 게 맞다.
+        if _asks_council(utterance):
+            return "council.notice", "총학+공지"
         guess, why = routing.by_utterance(utterance)
         # ★ 별칭이 아무것도 못 잡았을 때만 본다. 별칭이 이겨야 한다 —
         #   '학사일정' 은 이미 별칭으로 가고, '수강신청 공지' 는 공지로 가야 한다.
@@ -510,6 +572,11 @@ def handle(db_path: pathlib.Path, block_name: str | None, payload: dict,
                      manual.verified_at)
             return templates.render_manual(manual, utterance=utterance)
 
+    # ★ 총학 공지가 학교 공지 검색보다 **먼저**다.
+    #   총학이 직접 넣은 것이라 크롤 결과보다 근거가 세다 —
+    #   '학점포기 없음' 과 같은 자리다 (T4).
+    if route == "council.notice":
+        return _handle_council(db_path, utterance, now=now)
     if route == "notice.search":
         return _handle_notice(db_path, utterance)
 
@@ -525,6 +592,13 @@ def handle(db_path: pathlib.Path, block_name: str | None, payload: dict,
     if route == "welcome":
         return templates.render_welcome()
     if route == "info.search":
+        # ★ T4 가 크롤보다 먼저다 — 등급을 말로만 두지 않는다.
+        #   학생은 '총학 공지' 라고 안 친다. '댄스제' 라고 친다.
+        #   별칭이 걸릴 때만 T4 를 쓰면 등급이 실제로는 안 지켜진다.
+        #   ★ 제목이 걸릴 때만이다. 본문까지 보면 흔한 낱말에 끌려간다.
+        promoted = _council_by_title(db_path, utterance, now=now)
+        if promoted is not None:
+            return promoted
         return _handle_section(db_path, utterance)
 
     # ★ 매핑 안 된 **총학이 만든** 블록은 다르다.
@@ -532,6 +606,83 @@ def handle(db_path: pathlib.Path, block_name: str | None, payload: dict,
     #   확신할 때만 답하고, 아니면 폴백 + 이름을 기록한다.
     answered = _handle_section(db_path, utterance, only_confident=True)
     return answered if answered is not None else templates.render_fallback()
+
+
+COUNCIL_STALE_HOURS = 24.0
+# 총학 자신을 가리키는 말은 제목 검색에서 뺀다 — 모든 글에 걸린다.
+COUNCIL_STOP = {"총학", "총학생회", "공지", "행사", "소식", "안내"}
+
+
+def _council_tokens(utterance: str) -> list[str]:
+    return [t for t in re.split(r"[^\w가-힣]+", utterance or "")
+            if len(t) >= 2 and t not in COUNCIL_STOP]
+
+
+def _council_by_title(db_path: pathlib.Path, utterance: str, *,
+                      now: dt.datetime | None = None) -> dict | None:
+    """제목이 걸리는 총학 공지가 있으면 그걸 답한다. 없으면 None."""
+    toks = _council_tokens(utterance)
+    if not toks:
+        return None
+    now = now or now_kst()
+    conn = repo.connect(db_path, readonly=True)
+    try:
+        posts = repo.search_council_titles(
+            conn, toks, today=now.date().isoformat())
+    finally:
+        conn.close()
+    if not posts:
+        return None
+    log.info("[council] 제목 일치로 T4 승격 q=%r n=%s", utterance[:30], len(posts))
+    return templates.render_council(posts, utterance=utterance)
+
+
+def _handle_council(db_path: pathlib.Path, utterance: str, *,
+                    now: dt.datetime | None = None) -> dict:
+    """총학 공지·행사 (T4).
+
+    ★ 마감이 지난 것은 조회에서 빠진다 (repo.query_council_posts).
+      9월에 "8월 25일까지 신청하세요" 가 나가면 크롤 오답보다 나쁘다 —
+      총학이 직접 넣은 것이라 학생이 더 믿기 때문이다.
+
+    ★ 비었으면 '없다' 가 아니라 '못 가져왔다' 고 말한다.
+      진짜 공지가 없는 건지 시트를 못 읽은 건지 우리는 구별 못 한다.
+      구별 못 하는 걸 구별한 척하면 그게 지어내기다. 학식 stale 과 같은 구조.
+    """
+    now = now or now_kst()
+    today = now.date().isoformat()
+    conn = repo.connect(db_path, readonly=True)
+    try:
+        tokens = _council_tokens(utterance)
+        posts = (repo.search_council_posts(conn, tokens, today=today)
+                 if tokens else [])
+        # ★ 구체적으로 물었는데 못 찾았으면 **최근 글로 채우지 않는다.**
+        #   '장학금 공지' 에 '댄스제 모집' 을 보여주면 총학이 장학금 공지를
+        #   낸 것처럼 읽힌다 — 학교 공지로 대체하지 않는 것과 같은 이유다.
+        asked_specific = bool(tokens)
+        have_any = repo.council_total(conn)
+        if not posts and not asked_specific:
+            posts = repo.query_council_posts(conn, today=today)
+        # 시트를 마지막으로 읽은 때. 비었을 때 '왜' 를 가르는 데 쓴다.
+        row = conn.execute(
+            """SELECT MAX(started_at) FROM crawl_run
+                WHERE source_key = 'council_sheet' AND outcome = 'success'"""
+        ).fetchone()
+        last_ok = row[0] if row else None
+    finally:
+        conn.close()
+
+    stale = (last_ok is None
+             or repo.staleness_hours(last_ok, now) > COUNCIL_STALE_HOURS)
+    log.info("[council] posts=%s last_ok=%s stale=%s tokens=%s",
+             len(posts), last_ok, stale, tokens)
+    if not posts:
+        if asked_specific and have_any:
+            # 시트는 읽었고 글도 있다. 다만 물은 게 없다 — 그 사실을 그대로 말한다.
+            return templates.render_council_missing(
+                " ".join(tokens)[:20] or utterance[:20])
+        return templates.render_council_empty(stale=stale)
+    return templates.render_council(posts, utterance=utterance)
 
 
 def _handle_notice(db_path: pathlib.Path, utterance: str) -> dict:
