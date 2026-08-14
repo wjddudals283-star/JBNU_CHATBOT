@@ -1317,7 +1317,17 @@ def get_section(conn: sqlite3.Connection, section_key: str) -> dict | None:
 # ─────────────────────────────────────────────────────────────────────────
 # 공지 목록 — 제목·게시일·링크·게시판만. 구조화하지 않는다.
 
-def notice_total(conn: sqlite3.Connection) -> int:
+def notice_total(conn: sqlite3.Connection, *, host: str | None = None) -> int:
+    """모아둔 공지 수. host 를 주면 그 사이트 것만.
+
+    ★ '그 사이트에 공지가 있나' 를 묻는 데 쓴다.
+      사이트 별칭으로 좁히기 전에 확인해야 한다 — 우리가 안 긁은 사이트로
+      좁히면 있는 공지도 0건이 된다 (career.jbnu.ac.kr 에서 실제로 그랬다).
+    """
+    if host:
+        return conn.execute(
+            "SELECT COUNT(*) FROM notice_item WHERE host = ?", (host,)
+        ).fetchone()[0]
     return conn.execute("SELECT COUNT(*) FROM notice_item").fetchone()[0]
 
 

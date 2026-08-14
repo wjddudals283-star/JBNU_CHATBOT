@@ -23,6 +23,7 @@
 from __future__ import annotations
 
 import functools
+import logging
 import math
 import pathlib
 import re
@@ -254,6 +255,13 @@ def match_site(utterance: str) -> tuple[str | None, str]:
             best_host = host
             best_name = site_names().get(host, alias)
     return best_host, best_name
+
+
+# 요청 종류를 가리키는 말. 분야가 아니라서 제목 검색에 넣으면 안 된다.
+# ★ 언어 표면이다 — 학교 관측이 아니라 '무엇을 달라는 말인가' 다.
+log = logging.getLogger("jbnu.search")
+
+NOTICE_KIND_WORDS = frozenset({"공지", "공지사항", "안내", "소식", "목록", "알림"})
 
 
 # 개인 기록 조회 — 크롤로는 영원히 못 넘는 벽이다.
@@ -771,7 +779,25 @@ def search_notices(conn, utterance: str, *, repo) -> NoticeResult:
     if total == 0:
         return NoticeResult(Outcome.NO_DATA, query_tokens=tokens)
 
+    # ★ '공지' 는 **분야가 아니라 요청 종류**다 (2026-08-14 실측)
+    #   '취업 공지' 가 "'공지' 가 제목에 든 공지를 찾지 못했어요" 로 나갔다.
+    #   학생은 '취업 분야의 최근 공지' 를 물은 건데 제목에서 '공지' 를 찾았다.
+    #   다른 낱말이 남을 때만 뺀다 — '공지' 하나만 물으면 그건 목록 요청이다.
+    if len(tokens) > 1:
+        without = [t for t in tokens if t not in NOTICE_KIND_WORDS]
+        if without:
+            tokens = without
+
     site_host, site_label = match_site(utterance)
+    # ★ 그 사이트의 **공지를 우리가 안 긁었으면** 좁히지 않는다
+    #   '취업' 이 career.jbnu.ac.kr 별칭이라 공지 검색이 그 사이트로 좁혀졌는데,
+    #   거기 공지는 0건이다 (페이지는 200섹션 있다). 그래서 제목에 '취업' 이 든
+    #   공지 139건이 있는데도 **한 건도 못 찾았다.**
+    #   사이트 좁히기는 페이지 검색에는 맞고 공지 검색에는 원천이 다르다.
+    #   임계값이 아니라 관측이다 — 그 호스트에 공지가 있나만 본다.
+    if site_host and repo.notice_total(conn, host=site_host) == 0:
+        log.info("[notice] 사이트 좁히기 취소 — %s 에 공지가 없다", site_host)
+        site_host, site_label = None, ""
     if site_host:
         used = {a for a, h in site_aliases().items() if h == site_host}
         used |= {site_label}
