@@ -91,9 +91,17 @@ def payload(utterance: str) -> dict:
 
 
 def flatten(resp: dict) -> tuple[str, list[str], str]:
-    """응답 → (본문, 버튼 라벨, 출처 URL). 카드 종류가 달라도 같은 자리를 본다."""
+    """응답 → (본문, **선택지**, 출처 URL). 카드 종류가 달라도 같은 자리를 본다.
+
+    ★ 선택지는 quickReplies 만이 아니다
+      되묻기는 두 모양으로 나간다 — 버튼으로 나갈 때도 있고
+      listCard 항목(링크)으로 나갈 때도 있다.
+      한쪽만 세다가 2~5개짜리 되묻기를 전부 '선택지 1개' 로 보고했고,
+      그 숫자를 보고 '고를 게 없다' 고 진단할 뻔했다. **자가 틀리면 진단이 틀린다.**
+    """
     tpl = resp.get("template") or {}
     body_parts: list[str] = []
+    choices: list[str] = []
     source = ""
     for out in tpl.get("outputs") or []:
         if "simpleText" in out:
@@ -101,8 +109,11 @@ def flatten(resp: dict) -> tuple[str, list[str], str]:
         elif "listCard" in out:
             card = out["listCard"]
             head = (card.get("header") or {}).get("title", "")
-            items = " · ".join(i.get("title", "") for i in card.get("items") or [])
-            body_parts.append(f"{head}: {items}")
+            titles = [i.get("title", "") for i in card.get("items") or []]
+            body_parts.append(f"{head}: {' · '.join(titles)}")
+            # 링크가 달린 항목은 학생이 고르는 자리다 — 선택지로 센다
+            choices += [t for t, i in zip(titles, card.get("items") or [])
+                        if i.get("link") or i.get("action")]
             for b in (card.get("buttons") or []):
                 source = source or b.get("webLinkUrl", "")
         elif "textCard" in out:
@@ -114,8 +125,8 @@ def flatten(resp: dict) -> tuple[str, list[str], str]:
             if tok.startswith("http"):
                 source = tok.rstrip(").,")
                 break
-    labels = [q.get("label", "") for q in tpl.get("quickReplies") or []]
-    return body, labels, source
+    choices += [q.get("label", "") for q in tpl.get("quickReplies") or []]
+    return body, choices, source
 
 
 def quoted_part(body: str) -> str:

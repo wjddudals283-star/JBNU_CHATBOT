@@ -193,3 +193,22 @@ def test_제목만_있는_줄은_경로다():
         .startswith("매학기")
     # 내용이 붙은 줄은 남는다 — 학식 세 끼니가 이 모양이다
     assert "식단표에" in lp.quoted_part("[아침] 식단표에 '운영없음' 으로 올라와 있어요")
+
+
+def test_선택지는_listCard_항목도_센다():
+    """★ 도구가 quickReplies 만 세서 '선택지 1개' 로 보고했다 (2026-08-14).
+
+    되묻기 선택지는 quickReplies 로 나갈 때도 있고 listCard 항목으로 나갈 때도 있다.
+    한쪽만 세면 2~5개짜리 되묻기가 전부 '1개' 로 찍힌다 —
+    그 숫자로 '고를 게 없다' 고 판단할 뻔했다. **자가 틀리면 진단이 틀린다.**
+    """
+    card, _ = kakao.list_card(
+        "'등록금' 안내가 여러 곳에 있어요",
+        [{"title": "등록안내", "link": "https://a"},
+         {"title": "차등납부", "link": "https://b"}])
+    r = kakao.response([card, kakao.simple_text("어느 쪽을 찾으시는지 눌러서 확인해 주세요.")],
+                       [kakao.quick_reply("처음으로")])
+    body, choices, _src = lp.flatten(r)
+    assert len(choices) == 3, choices        # 항목 2 + 처음으로 1
+    mark, why = lp.judge(body, choices, "등록금", "answer")
+    assert mark.startswith("🔁") and "3" in why

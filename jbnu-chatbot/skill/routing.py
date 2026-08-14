@@ -172,6 +172,52 @@ def is_welcome(payload: dict, *, path_block: str | None = None,
     return False
 
 
+_HANGUL = re.compile(r"[가-힣]")
+
+
+def _spaced(s: str) -> str:
+    """공백을 **남긴** 정규화. 경계를 봐야 하는 자리에서 쓴다.
+
+    ★ _norm 은 공백을 지운다. 그게 맞는 자리가 있고(블록 이름 비교),
+      틀린 자리가 있다 — 낱말 경계를 보려면 공백이 있어야 한다.
+      _norm 으로 자른 뒤에 경계를 찾다가 '생활관 학식 조식' 의 '학식' 을
+      낱말 안쪽으로 오판했다. 필요한 정보를 먼저 버린 것이다.
+    """
+    return re.sub(r"[._\-]+", " ", re.sub(r"\s+", " ", (s or ""))).strip().lower()
+
+
+def _standalone(needle: str, hay: str) -> bool:
+    """`needle` 이 낱말 **안쪽**이 아닌 자리에 한 번이라도 나오는가.
+
+    ★ 한글은 낱말 사이에 공백이 없다
+      영어라면 \\b 로 끝날 일인데, '인공지능' 안의 '공지' 는 경계가 없다.
+      그래서 **양쪽이 다 한글이면** 낱말 안쪽으로 본다.
+      한쪽이라도 공백·숫자·문장부호·문자열 끝이면 낱말 자리로 본다.
+
+      학사공지     '공지' 앞이 '사', 뒤가 끝   → 한쪽만 한글 → 별칭으로 센다 (맞다)
+      인공지능     앞이 '인', 뒤가 '능'        → 양쪽 한글 → 안 센다 (맞다)
+
+    ★ 공백을 남긴 문자열에서 먼저 본다.
+      학생이 붙여 쓰면('오늘학식') 거기선 못 찾으므로, 그때만 붙인 것끼리 본다.
+      붙여 쓴 말에는 애초에 경계 정보가 없다 — 없는 걸 지어내지 않는다.
+
+    완벽한 형태소 분석이 아니다. 다만 '양쪽이 한글' 은 관측 가능한 조건이고,
+    46문항과 버튼 전수로 대조해서 무엇이 달라지는지 잴 수 있다.
+    """
+    ns, hs = _spaced(needle), _spaced(hay)
+    if ns and ns in hs:
+        i = hs.find(ns)
+        while i != -1:
+            before = hs[i - 1] if i > 0 else ""
+            after = hs[i + len(ns)] if i + len(ns) < len(hs) else ""
+            if not (_HANGUL.match(before or " ") and _HANGUL.match(after or " ")):
+                return True
+            i = hs.find(ns, i + 1)
+        return False
+    # 붙여 쓴 경우 — 경계가 없으니 예전처럼 들어 있기만 하면 센다
+    return _norm(needle) in _norm(hay)
+
+
 def by_utterance(utterance: str,
                  config_path: pathlib.Path | None = None) -> tuple[str | None, str]:
     """폴백으로 들어온 말의 갈래를 별칭으로 정한다. **폴백 경로에서만 쓴다.**
@@ -184,16 +230,24 @@ def by_utterance(utterance: str,
 
     ★ 가장 긴 별칭이 이긴다
       '학식 메뉴' 와 '학식' 이 둘 다 걸리면 긴 쪽이 더 많이 말해준다.
+
+    ★ 낱말 **안쪽**에 걸린 것은 안 센다 (2026-08-14 배포본 실측)
+      '컴퓨터인공지능학부 교육과정' 이 공지 검색으로 갔다.
+      인**공지**능 안에 '공지' 가 들어 있었다. 확신 답변이던 게 '모른다' 로 후퇴했다.
+      한글은 낱말 사이에 공백이 없어서 부분문자열이 그대로 덫이 된다 —
+      '학자금 대출' 이 사이트 별칭에 걸렸던 것과 같은 종류다.
     """
-    u = _norm(utterance)
-    if not u:
+    if not _norm(utterance):
         return None, "empty"
     best: tuple[int, str, str] | None = None
     for handler, names in (load(config_path).get("handlers") or {}).items():
         for n in list(names or []) + [handler]:
             k = _norm(n)
             # 한 글자짜리는 아무 데나 걸린다. 두 글자부터 본다.
-            if len(k) >= 2 and k in u and (best is None or len(k) > best[0]):
+            # ★ **원문 그대로** 넘긴다. _norm 을 먼저 씌우면 공백이 사라져서
+            #   경계를 볼 수가 없다 — 필요한 정보를 버린 뒤에 찾는 꼴이 된다.
+            if len(k) >= 2 and _standalone(n, utterance) \
+                    and (best is None or len(k) > best[0]):
                 best = (len(k), handler, n)
     if best is None:
         return None, "no-alias"

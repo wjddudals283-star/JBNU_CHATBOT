@@ -118,3 +118,34 @@ def test_사이트가_여럿인_것과_학과마다_다른_것은_다르다():
     body = " ".join(o.get("simpleText", {}).get("text", "")
                     for o in out["template"]["outputs"])
     assert "학과마다" not in body, body
+
+
+# ═══════════════════════════════════════════════════════════════
+# 별칭이 낱말 안쪽에 걸리면 안 된다
+# ═══════════════════════════════════════════════════════════════
+
+def test_별칭이_낱말_안쪽에_걸리지_않는다():
+    """★ 배포본 실측에서 확신 답변이 '모른다' 로 후퇴했다 (2026-08-14).
+
+    '컴퓨터인공지능학부 교육과정' 이 공지 검색으로 갔다.
+    인**공지**능 안에 '공지' 가 들어 있었다.
+    한글은 낱말 사이에 공백이 없어서 부분문자열이 그대로 덫이 된다 —
+    '학자금 대출' 이 사이트 별칭에 걸렸던 것과 같은 종류다.
+    """
+    assert routing.by_utterance("컴퓨터인공지능학부 교육과정")[0] is None
+    assert routing.by_utterance("인공지능 대학원")[0] is None
+    # 진짜 공지는 그대로 간다
+    assert routing.by_utterance("수강신청 공지")[0] == "notice.search"
+    assert routing.by_utterance("학사공지")[0] == "notice.search"
+
+
+def test_경계를_보려면_공백을_남겨야_한다():
+    """★ _norm 으로 자른 뒤에 경계를 찾다가 멀쩡한 것을 깼다.
+
+    '생활관 학식 조식' 의 '학식' 이 관/조 사이에 낀 것처럼 보였다.
+    필요한 정보를 먼저 버리고 나서 찾은 것이다 — 고치다 만든 문제다.
+    """
+    for m in ("조식", "중식", "석식"):
+        assert routing.by_utterance(f"생활관 학식 {m}")[0] == "food.menu.today"
+    # 붙여 쓰면 경계가 없다. 없는 걸 지어내지 않고 예전처럼 센다.
+    assert routing.by_utterance("오늘학식")[0] == "food.menu.today"

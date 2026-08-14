@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import logging
 import os
 import pathlib
 import sys
@@ -27,6 +28,8 @@ from crawler.parsers import jbnu_academic_schedule  # noqa: E402
 from crawler.parsers import jbnu_cafeteria_day      # noqa: E402
 from crawler.parsers import likehome_week_menu   # noqa: E402
 from store import repo                           # noqa: E402
+
+log = logging.getLogger("jbnu.crawler.run")
 
 SOURCES_PATH = ROOT / "config" / "sources.yaml"
 # 배포 환경에서는 영구 디스크 경로를 쓴다 (Render: /var/data).
@@ -89,6 +92,27 @@ def academic_variants(today: dt.date, *, back: int = 1, ahead: int = 1) -> list[
     return out
 
 
+_KST = dt.timezone(dt.timedelta(hours=9))
+
+
+def _record_fetch_failure(conn, source_key: str, err: Exception) -> None:
+    """가져오다 죽은 것을 crawl_run 에 남긴다.
+
+    ★ 남기는 것 자체가 목적이다. 여기서 또 예외가 나면 원래 실패까지 삼킨다.
+    """
+    if conn is None:
+        return
+    now = dt.datetime.now(_KST).isoformat()
+    try:
+        rid = f"fail/{source_key}/{now}"
+        repo.start_crawl(conn, run_id=rid, source_key=source_key, started_at=now)
+        repo.finish_crawl(conn, rid, outcome="fetch_error", finished_at=now,
+                          error_message=f"{type(err).__name__}: {err}"[:500])
+        conn.commit()
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def run_source(conn, source_key: str, cfg: dict, *, date: str | None,
                dry_run: bool, force: bool) -> None:
     parser = PARSERS.get(cfg.get("parser"))
@@ -107,16 +131,29 @@ def run_source(conn, source_key: str, cfg: dict, *, date: str | None,
         params[cfg["date_param"]] = d.strftime(fmt) if fmt else d.isoformat()
 
     csrf = cfg.get("csrf")
-    if csrf:
-        result = fetch_mod.fetch_with_csrf(
-            source_key, cfg["url"], page_url=csrf["page_url"],
-            meta_name=csrf.get("meta_name", "_csrf"),
-            header=csrf.get("header", "X-CSRF-Token"),
-            params=params, media_type=cfg.get("media_type", "html"))
-    else:
-        result = fetch_mod.fetch(source_key, cfg["url"], params=params,
-                                 method=cfg.get("method", "GET"),
-                                 media_type=cfg.get("media_type", "html"))
+    try:
+        if csrf:
+            result = fetch_mod.fetch_with_csrf(
+                source_key, cfg["url"], page_url=csrf["page_url"],
+                meta_name=csrf.get("meta_name", "_csrf"),
+                header=csrf.get("header", "X-CSRF-Token"),
+                params=params, media_type=cfg.get("media_type", "html"))
+        else:
+            result = fetch_mod.fetch(source_key, cfg["url"], params=params,
+                                     method=cfg.get("method", "GET"),
+                                     media_type=cfg.get("media_type", "html"))
+    except Exception as e:  # noqa: BLE001
+        # ★ fetch 가 예외로 죽으면 **아무 기록도 안 남고 있었다** (2026-08-14)
+        #   crawl_run 은 ingest() 안에서만 쓰이는데 fetch 는 그 앞에 있다.
+        #   게다가 main() 이 예외를 잡아 print 만 하고 0 을 돌려줘서
+        #   스케줄러는 성공으로 봤다. 서버에서 coop_week_menu 가
+        #   '성공도 실패도 없음' 이던 정체가 이것이다.
+        #
+        #   403 은 결과가 돌아오므로 ingest 가 fetch_error 로 남긴다.
+        #   연결 끊김·타임아웃·TLS 실패는 예외라 그 길로 못 간다.
+        #   침묵이 가장 위험하다 — 여기서 반드시 남긴다.
+        _record_fetch_failure(conn, source_key, e)
+        raise
     print(f"  fetch {result.http_status}  {len(result.content):,}B  "
           f"hash={result.content_hash[:12]} stable={result.stable_hash[:12]}")
     print(f"  final_url = {result.final_url}")
@@ -249,6 +286,7 @@ def main(argv: list[str] | None = None) -> int:
         conn = repo.connect(DB_PATH)
         repo.init_db(conn)
 
+    failed = 0
     for key in targets:
         cfg = sources.get(key)
         if cfg is None:
@@ -259,10 +297,14 @@ def main(argv: list[str] | None = None) -> int:
             run_source(conn, key, cfg, date=args.date,
                        dry_run=args.dry_run, force=args.force)
         except Exception as e:  # noqa: BLE001
+            # ★ 한 소스가 죽어도 나머지는 돌린다. 다만 **조용히** 넘어가지 않는다.
+            #   print 만 하고 0 을 돌려줘서 스케줄러가 성공으로 보고 있었다.
+            failed += 1
+            log.error("[run] FAIL source=%s %s: %s", key, type(e).__name__, e)
             print(f"  실패: {type(e).__name__}: {e}")
     if conn:
         conn.close()
-    return 0
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":

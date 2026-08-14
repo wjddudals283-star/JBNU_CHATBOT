@@ -360,3 +360,80 @@ def test_고른_게_아니면_여전히_되묻는다():
 
 def test_띄어쓰기가_달라도_고른_것으로_본다():
     assert clarify.chosen_option("일반휴학", ["일반 휴학", "군입대 휴학"]) == "일반 휴학"
+
+
+# ═══════════════════════════════════════════════════════════════
+# 같은 버튼 여럿은 선택지가 아니다 (AMBIGUOUS 목록)
+# ═══════════════════════════════════════════════════════════════
+
+from skill import templates  # noqa: E402
+
+
+class _Hit:
+    def __init__(self, site, title, url, path=""):
+        self.site_name, self.page_title, self.page_url = site, title, url
+        self.path = self.quote_path = path or title
+        self.observed_at = None
+        self.page_modified = ""
+
+
+class _Res:
+    def __init__(self, hits):
+        from skill.section_search import Outcome
+        self.outcome, self.hits = Outcome.AMBIGUOUS, hits
+        self.subject, self.missing_tokens = "등록금", []
+        self.needs_attribute = ""
+        self.searched_sections = 100
+
+
+def _items(resp):
+    for o in resp["template"]["outputs"]:
+        if "listCard" in o:
+            return [(i["title"], i.get("description", ""))
+                    for i in o["listCard"].get("items") or []]
+    return []
+
+
+def test_한_사이트뿐이면_문서_제목을_앞에_둔다():
+    """★ '등록금 납부 기간' 은 네 줄이 전부 '등록금' 이었다 (2026-08-14 실측).
+
+    구별되는 말(등록안내·차등납부·분할납부)은 설명 줄에 있었는데,
+    눈이 읽는 건 제목 줄이다. 학과 이름을 앞에 두는 규칙은
+    후보가 **여러 사이트에 걸쳐 있을 때**의 규칙이었다.
+    """
+    hits = [_Hit("등록금", t, f"https://x/{i}")
+            for i, t in enumerate(["등록안내", "차등납부", "분할납부", "등록금반환"])]
+    titles = [t for t, _d in _items(templates.render_section(_Res(hits)))]
+    assert titles == ["등록안내", "차등납부", "분할납부", "등록금반환"]
+    assert len(set(titles)) == len(titles), "같은 말 네 개는 선택지가 아니다"
+
+
+def test_사이트가_여럿이면_사이트를_앞에_둔다():
+    """205개 사이트가 붙은 뒤로는 문서 제목만으로 못 고른다 — 그 규칙은 유지."""
+    hits = [_Hit("전기공학과", "졸업요건", "https://a"),
+            _Hit("사학과", "졸업요건", "https://b")]
+    titles = [t for t, _d in _items(templates.render_section(_Res(hits)))]
+    assert titles == ["전기공학과", "사학과"]
+
+
+def test_완전히_같은_줄은_한_번만():
+    """★ clarify.options 에 이미 있던 규칙인데 여기엔 없었다.
+
+    '근로장학생' 은 같은 공지 제목이 세 번 나왔다.
+    원칙이 한 군데만 있으면 다른 데서 조용히 어긋난다.
+    """
+    hits = [_Hit("창업교육센터", "센터 공지사항", f"https://x/{i}") for i in range(3)]
+    hits.append(_Hit("도서관", "서비스별 연락처", "https://y"))
+    rows = _items(templates.render_section(_Res(hits)))
+    assert len(rows) == 2, rows
+
+
+def test_하나만_남으면_고르라고_하지_않는다():
+    """겹치는 걸 지우고 나니 하나면 '여러 곳' 이 아니다."""
+    hits = [_Hit("생활관", "생활관 자치위원회", f"https://x/{i}") for i in range(3)]
+    resp = templates.render_section(_Res(hits))
+    text = " ".join(o["simpleText"]["text"] for o in resp["template"]["outputs"]
+                    if "simpleText" in o)
+    header = resp["template"]["outputs"][0]["listCard"]["header"]["title"]
+    assert "여러 곳" not in header, header
+    assert "골라" not in text and "어느 쪽" not in text

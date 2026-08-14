@@ -743,10 +743,21 @@ def render_section(result, *, utterance: str = "") -> dict:
     if result.outcome is Outcome.PERSONAL:
         # ★ 개인 기록은 우리가 볼 수 없다. 비슷한 규정을 인용하면
         #   학생은 자기 성적을 물었는데 학칙을 받게 된다.
+        # ★ OASIS 라고 보내고 있었다 (2026-08-14 배포본 실측)
+        #   학교는 JUMP 로 갈아탔다. 우리가 이 전환에 당한 게 두 번째다 —
+        #   전에는 사본이 낡아서였고(templates.py 위쪽 주석), 이번엔 우리 문안이었다.
+        #
+        #   ★ 이름만 바꾸지 않고 링크를 준다. 브랜드 이름은 또 바뀐다.
+        #   ★ '수강신청은 별개' 는 학교가 직접 쓴 말이다 —
+        #     "수강신청사이트와 JUMP는 별개이오니 유의 바람" (수강신청 안내)
+        #     뭉뚱그려 'JUMP 에서 보세요' 라고 하면 수강신청은 틀린 안내가 된다.
+        #   확인: 총학생회장 (2026-08-14) · 코퍼스 대조 https://jump.jbnu.ac.kr
         return kakao.response(
             [kakao.simple_text(
                 "본인 성적·수강신청·장학금 내역 같은 개인 기록은 확인해 드릴 수 없어요.\n"
-                "학교 포털(OASIS)에 로그인해서 보셔야 해요.\n\n"
+                "학교 포털 JUMP 에 로그인해서 보셔야 해요.\n"
+                "https://jump.jbnu.ac.kr\n\n"
+                "※ 수강신청은 JUMP 와 별개 사이트예요.\n\n"
                 "제도나 규정이 궁금하시면 그건 알려드릴 수 있어요.")],
             [kakao.quick_reply("처음으로")])
 
@@ -778,12 +789,29 @@ def render_section(result, *, utterance: str = "") -> dict:
         # ★ 비슷한 후보가 여럿이면 찍지 않는다. 찍는 것은 추론이다.
         # 제목에 **학과 이름**을 둔다. 205개 사이트가 붙은 뒤로는
         # '졸업요건' 이 학과마다 있어서 문서 제목만으로는 고를 수가 없다.
+        #   ★ 다만 후보가 **한 사이트뿐이면** 학과 이름은 아무것도 안 가른다.
+        #     '등록금 납부 기간' 은 네 줄이 전부 '등록금' 이었다.
+        #     구별되는 말(등록안내·차등납부·분할납부·등록금반환)은 설명 줄에 있었는데,
+        #     눈이 읽는 건 제목 줄이다. 같은 말 네 개는 선택지가 아니다.
+        sites = {getattr(h, "site_name", "") or h.page_title
+                 for h in result.hits}
+        one_site = len(sites) == 1
         items = []
-        for h in result.hits[:kakao.MAX_LIST_ITEMS]:
+        seen: set[tuple[str, str]] = set()
+        for h in result.hits:
+            if len(items) >= kakao.MAX_LIST_ITEMS:
+                break
             site = getattr(h, "site_name", "") or h.page_title
-            items.append({"title": site,
-                          "description": h.page_title or
-                          (h.quote_path or h.path).split(" > ")[-1],
+            doc = h.page_title or (h.quote_path or h.path).split(" > ")[-1]
+            title, desc = (doc, site) if one_site else (site, doc)
+            # ★ 완전히 같은 줄은 한 번만. clarify.options 에 이미 있던 규칙인데
+            #   여기엔 없었다 — '근로장학생' 은 같은 공지 제목이 세 번 나왔다.
+            #   원칙이 한 군데만 있으면 다른 데서 조용히 어긋난다.
+            key = (title, desc)
+            if key in seen:
+                continue
+            seen.add(key)
+            items.append({"title": title, "description": desc,
                           "link": h.page_url})
         # ★ '사이트가 여럿' 과 '학과마다 다르다' 는 다른 말이다
         #   '교내 행사' 후보가 본부·연구소·센터 다섯 곳이었는데
@@ -802,10 +830,16 @@ def render_section(result, *, utterance: str = "") -> dict:
         else:
             # ★ 조사는 바로 앞말('안내')을 따른다. subject 를 따르게 걸었다가
             #   "'통금' 안내이 여러 곳에" 가 나왔다 — 원래 맞던 걸 깬 것이다.
-            header = f"'{subject}' 안내가 여러 곳에 있어요"
-            tail = ("학과마다 내용이 달라요. 어느 학과인지 알려주시면 그곳만 찾아드릴게요."
-                    if dept_dependent
-                    else "어느 쪽을 찾으시는지 눌러서 확인해 주세요.")
+            if len(items) < 2:
+                # ★ 겹치는 걸 지우고 나니 하나만 남았다. 그러면 '여러 곳' 이 아니다.
+                #   고를 게 없는데 고르라고 하면 학생을 한 번 더 누르게 만들 뿐이다.
+                header = f"'{subject}' 안내는 여기 있어요"
+                tail = "눌러서 원문을 확인해 주세요."
+            else:
+                header = f"'{subject}' 안내가 여러 곳에 있어요"
+                tail = ("학과마다 내용이 달라요. 어느 학과인지 알려주시면 그곳만 찾아드릴게요."
+                        if dept_dependent
+                        else "어느 쪽을 찾으시는지 눌러서 확인해 주세요.")
         card, _ = kakao.list_card(header, items)
         return kakao.response([card, kakao.simple_text(tail)],
                               [kakao.quick_reply("처음으로")])
