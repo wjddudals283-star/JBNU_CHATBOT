@@ -161,10 +161,26 @@ def quoted_part(body: str) -> str:
     return "\n".join(keep)
 
 
-def judge(body: str, labels: list[str], must: str, expect: str) -> tuple[str, str]:
-    """네 갈래 판정. (기호, 이유)"""
+def judge(body: str, labels: list[str], must: str, expect: str,
+          route: str = "") -> tuple[str, str]:
+    """네 갈래 판정. (기호, 이유)
+
+    ★ 공지는 **다른 자로 잰다** (2026-08-14)
+      공지 검색은 제목·게시일·링크만 낸다. 본문을 안 읽는 게 설계다 —
+      안 읽은 걸 아는 척하지 않으려고 그렇게 만들었다.
+      그런데 안내 인용과 같은 자로 재니 인용부에
+      "제목만 보고 찾은 거라…" 만 남아서 전부 ⚠️ 반쪽으로 찍혔다.
+      **약속한 적 없는 걸 못 지켰다고 센 것이다.**
+      (자가 틀리면 진단이 틀린다 — 오늘 두 번째다)
+    """
     if not body:
         return "❌ 못함", "빈 응답"
+    if route == "notice.search":
+        if any(m in body for m in UNKNOWN_MARKS):
+            return "❌ 못함", "공지를 못 찾음"
+        if must and must not in body:
+            return "❌ 못함", f"제목에 '{must}' 이 없음"
+        return "✅ 답함", "공지는 제목·날짜·링크까지가 약속이다"
     if any(m in body for m in ASK_MARKS):
         return "🔁 되물음", ("선택지 " + str(len(labels)) + "개" if labels else "형식 안내")
     if any(m in body for m in UNKNOWN_MARKS):
@@ -208,7 +224,7 @@ def probe_one(q: str, must: str, expect: str, token: str, *,
             route = "-(구버전)"
 
     body, labels, source = flatten(resp)
-    mark, why = judge(body, labels, must, expect)
+    mark, why = judge(body, labels, must, expect, route=route)
     return {"q": q, "route": route, "body": body, "ask": labels,
             "source": source, "mark": mark, "why": why, "ms": ms}
 

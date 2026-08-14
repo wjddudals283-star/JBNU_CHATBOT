@@ -210,3 +210,58 @@ def test_버튼이_보내는_일수를_서버가_읽는다():
     from skill import server
     assert server._resolve_days(
         {}, f"학사일정 {templates.MAX_UPCOMING_DAYS}일") == templates.MAX_UPCOMING_DAYS
+
+
+# ═══════════════════════════════════════════════════════════════
+# '언제' 를 버리지 않는다
+# ═══════════════════════════════════════════════════════════════
+
+def test_시간을_묻는_말은_학사일정으로_간다():
+    """★ '수강신청 언제야' 가 안내 검색으로 가고 있었다 (2026-08-14 실측).
+
+    커스텀 메뉴 1번 칸, 학생이 제일 먼저 누르는 자리다.
+    검색은 '언제' 를 떨어뜨리고 '수강신청' 만 남겨서 수강신청 **안내 페이지**의
+    두 갈래(학점 하한선 · 변경 추가)를 되물었다. 둘 다 날짜가 아니다 —
+    **답이 없는 문서에서 갈래를 만든 것이다.**
+    """
+    from skill import server
+
+    def route(u):
+        return server.route_of({"userRequest": {"utterance": u},
+                                "action": {"params": {}}})[0]
+
+    assert route("수강신청 언제야") == "deadline.upcoming"
+    assert route("등록금 납부 기간") == "deadline.upcoming"
+
+
+def test_시간어가_없으면_안_바꾼다():
+    """'수강신청 공지' 는 공지를, '학점 상한' 은 규정을 묻는 말이다."""
+    from skill import server
+
+    def route(u):
+        return server.route_of({"userRequest": {"utterance": u},
+                                "action": {"params": {}}})[0]
+
+    assert route("수강신청 공지") == "notice.search"
+    assert route("수강신청 학점 상한") == "info.search"
+    # 별칭이 이긴다 — 시간어 규칙이 별칭을 덮으면 안 된다
+    assert route("학사일정") == "deadline.upcoming"
+
+
+def test_학사일정이_비어도_안_터진다():
+    """★ 빈 목록에 ranked[0] 을 하고 있었다 (2026-08-14).
+
+    서버에 자료가 있어서 안 터졌을 뿐이다. 수집이 멈추거나 항목이 다 지나간 날이면
+    '시험 언제' 가 500 이 된다.
+    **자료가 있다는 가정이 코드에 박혀 있으면 없는 날 학생이 대신 발견한다.**
+    """
+    from skill.calendar_search import Outcome, SearchResult, Topic
+
+    result = SearchResult(outcome=Outcome.FOUND, entries=[],
+                          topic=Topic(key="시험", label="시험",
+                                      title_keywords=["시험"], see_also=None),
+                          searched_total=0)
+    r = templates.render_calendar_item(result, today="2026-08-14",
+                                       source_url="https://x")
+    assert kakao.validate(r) == []
+    assert "찾지 못했어요" in r["template"]["outputs"][0]["simpleText"]["text"]

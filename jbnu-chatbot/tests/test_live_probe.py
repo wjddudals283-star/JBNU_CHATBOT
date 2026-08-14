@@ -212,3 +212,27 @@ def test_선택지는_listCard_항목도_센다():
     assert len(choices) == 3, choices        # 항목 2 + 처음으로 1
     mark, why = lp.judge(body, choices, "등록금", "answer")
     assert mark.startswith("🔁") and "3" in why
+
+
+def test_공지는_다른_자로_잰다():
+    """★ 약속한 적 없는 걸 못 지켰다고 세고 있었다 (2026-08-14).
+
+    공지 검색은 제목·게시일·링크만 낸다. 본문을 안 읽는 게 설계다.
+    안내 인용과 같은 자로 재니 인용부에 "제목만 보고 찾은 거라…" 만 남아
+    ⚠️ 반쪽으로 찍혔다. **자가 틀리면 진단이 틀린다** — 오늘 두 번째다.
+    """
+    # 실제 응답 모양 — 제목은 listCard 에 있어서 인용부에는 안내문만 남는다
+    body = ("'모집' 이 제목에 든 공지예요: 2026학년도 근로장학생 모집\n"
+            "제목만 보고 찾은 거라 자세한 내용은 눌러서 확인해 주세요.")
+    # 안내 인용의 자로 재면 '모집' 이 되읊는 줄에만 있어 반쪽으로 찍힌다
+    assert lp.judge(body, [], "모집", "answer")[0].startswith("⚠️"), \
+        lp.quoted_part(body)
+    # 공지의 자로 재면 제목에 낱말이 있으니 답한 것이다
+    assert lp.judge(body, [], "모집", "answer",
+                    route="notice.search")[0].startswith("✅")
+
+
+def test_공지를_못_찾으면_공지에서도_못함이다():
+    body = "'교육과정'이 제목에 든 공지를 찾지 못했어요."
+    mark, _ = lp.judge(body, [], "교육과정", "answer", route="notice.search")
+    assert mark.startswith("❌")

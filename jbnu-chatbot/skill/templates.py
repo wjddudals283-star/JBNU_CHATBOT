@@ -536,6 +536,17 @@ def render_calendar_item(result, *, today: str, source_url: str,
 
     d0 = dt.date.fromisoformat(today)
     ranked = result.entries
+    if not ranked:
+        # ★ 여기서 터지고 있었다 — 빈 목록에 ranked[0] (2026-08-14)
+        #   서버에는 학사일정이 있어서 안 터졌을 뿐이다.
+        #   수집이 멈추거나 항목이 다 지나간 날이면 '시험 언제' 가 500 이 된다.
+        #   **자료가 있다는 가정이 코드에 박혀 있으면 없는 날 학생이 대신 발견한다.**
+        return kakao.response(
+            [kakao.simple_text(
+                f"{label} 일정을 학사일정에서 찾지 못했어요.\n\n"
+                f"원문에서 직접 확인해 주세요.\n{source_url}")],
+            [kakao.quick_reply("학사일정 전체", "학사일정"),
+             kakao.quick_reply("처음으로")])
     head = ranked[0]
     lines = [f"{label} — {_period_text(head)}이에요.",
              f"· {head['title']}"]

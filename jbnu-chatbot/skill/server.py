@@ -390,6 +390,29 @@ def create_app(db_path: pathlib.Path | None = None, *,
 # 처리 본체 (FastAPI 없이도 테스트할 수 있게 분리)
 # ═══════════════════════════════════════════════════════════════
 
+# 시간을 묻는 말. ★ 언어 표면이지 학교 관측이 아니다 — 조사·인사말과 같은 칸이다.
+_ASKS_WHEN = re.compile(r"언제|며칠|날짜|기간|마감")
+
+
+def _asks_when(utterance: str) -> bool:
+    """'언제' 를 버리고 있었다 (2026-08-14 배포본 실측).
+
+    ★ '수강신청 언제야' 가 안내 검색으로 갔다
+      커스텀 메뉴 1번 칸, 학생이 제일 먼저 누르는 자리다.
+      검색은 '언제' 를 토큰에서 떨어뜨리고 '수강신청' 만 남겨서
+      수강신청 **안내 페이지**의 두 갈래(학점 하한선 · 변경 추가)를 되물었다.
+      둘 다 날짜가 아니다. **답이 없는 문서에서 갈래를 만든 것이다.**
+
+      날짜는 학사일정에 있다. 주제 목록은 config 가 갖고 있고
+      (_handle_upcoming 이 이미 find_topic 으로 가른다) 우리는 문을 열어주기만 한다.
+
+    ★ 시간어가 없으면 안 바꾼다
+      '수강신청 공지' 는 공지를 묻는 말이고 '수강신청 학점 상한' 은 규정을 묻는 말이다.
+      45문항 전수로 대조해서 바뀌는 건 두 개뿐인 걸 확인했다.
+    """
+    return bool(_ASKS_WHEN.search(utterance or ""))
+
+
 def route_of(payload: dict, block_name: str | None = None) -> tuple[str, str]:
     """이 발화를 **누가 받는가**. (route, why)
 
@@ -427,6 +450,10 @@ def route_of(payload: dict, block_name: str | None = None) -> tuple[str, str]:
 
     if routing.is_fallback(payload, path_block=block_name):
         guess, why = routing.by_utterance(utterance)
+        # ★ 별칭이 아무것도 못 잡았을 때만 본다. 별칭이 이겨야 한다 —
+        #   '학사일정' 은 이미 별칭으로 가고, '수강신청 공지' 는 공지로 가야 한다.
+        if guess is None and _asks_when(utterance)                 and calendar_search.find_topic(utterance) is not None:
+            return "deadline.upcoming", "시간질문+학사일정주제"
         return (guess or "info.search"), f"폴백→{why}"
 
     # 매핑 안 된 **총학이 만든** 블록. 확신할 때만 답한다.
