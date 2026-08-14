@@ -56,6 +56,7 @@ def _next_day_button(facility_name: str, meal_ko: str, date: str,
 def render_meal(answer: MealAnswer, *, facility_name: str, date: str,
                 meal_type: str, source_url: str, price_url: str | None = None,
                 contact: str | None = None, today: str | None = None,
+                source_name: str = "생협 홈페이지",
                 has_price_table: bool = False) -> dict:
     """식단 질문 하나 → 카카오 응답. 분기별로 문장이 완전히 다르다."""
     meal_ko = MEAL_KO.get(meal_type, meal_type)
@@ -74,7 +75,8 @@ def render_meal(answer: MealAnswer, *, facility_name: str, date: str,
         return _render_c1(facility_name=facility_name, dl=dl, meal_ko=meal_ko,
                           source_url=source_url, date=date, today=today)
     return _render_c2(answer, facility_name=facility_name, dl=dl,
-                      meal_ko=meal_ko, source_url=source_url, contact=contact)
+                      meal_ko=meal_ko, source_url=source_url, contact=contact,
+                      source_name=source_name)
 
 
 # ── A. 사실 있음 + 신선함 ────────────────────────────────────────
@@ -262,10 +264,43 @@ def _render_c1(*, facility_name: str, dl: str, meal_ko: str, source_url: str,
 
 # ── C-2. 확인 불가 ──────────────────────────────────────────────
 
+def stale_notice(observed_at: str | None, *, source_url: str,
+                 source_name: str = "원문") -> dict:
+    """**낡았다는 사실을 학생에게 말한다.** 사람이 판단하지 않는다.
+
+    ★ '못 긁음' 을 '답' 인 척 내보내고 있었다 (2026-08-14)
+      '(8/12 22:27 확인 기준)' 은 학생에게 **최신처럼 읽힌다.**
+      우리는 그 뒤로 한 번도 못 가져왔는데 그 사실이 화면에 없었다.
+      '없다의 갈래' 중 '못 긁음' 이 정확히 이 자리인데 갈래만 있고 말이 없었다.
+
+    ★ 자동화보다 이게 먼저다
+      자동화를 시도하다 실패하면 개강 때 낡은 자료가 최신인 척 나간다.
+      낡았다고 말해 두면 자동화가 늦어져도 **틀린 답은 안 나간다.**
+
+    임계는 repo.MAX_STALENESS_HOURS 가 이미 정한다 — 사람이 매번 안 본다.
+    """
+    when = f"{date_label(observed_at[:10])} 자료예요" if observed_at else "오래된 자료예요"
+    return kakao.text_card(
+        f"이건 {when}. 그 뒤로 못 가져왔어요.",
+        f"최신은 {source_name}에서 확인해 주세요.",
+        buttons=[kakao.web_button(f"{source_name} 열기", source_url)])
+
+
 def _render_c2(answer: MealAnswer, *, facility_name: str, dl: str, meal_ko: str,
-               source_url: str, contact: str | None) -> dict:
+               source_url: str, contact: str | None,
+               source_name: str = "생협 홈페이지") -> dict:
+    if answer.reason == "stale":
+        # ★ '확인하지 못했어요' 로 뭉개지 않는다. 가진 게 언제 것인지 말한다.
+        return kakao.response(
+            [kakao.simple_text(
+                f"{facility_name} {dl} {meal_ko} 식단은 지금 자료로 쓰기 어려워요."),
+             stale_notice(answer.observed_at, source_url=source_url,
+                          source_name=source_name)],
+            [kakao.quick_reply("다른 식당", "학식 어디 열어"),
+             kakao.quick_reply("처음으로", "처음으로")],
+        )
+
     why = {
-        "stale": "마지막 확인이 오래돼서 지금 자료로 쓰기 어려워요.",
         "no_record": "아직 자료를 가져오지 못했어요.",
         "unknown": "자료가 비어 있어 확인하지 못했어요.",
     }.get(answer.reason, "확인하지 못했어요.")
@@ -300,7 +335,7 @@ def render_meal_ask(names: list[str], *, date: str) -> dict:
 
 
 def render_meal_day(name: str, answers: list, *, date: str,
-                    source_url: str) -> dict:
+                    source_url: str, source_name: str = "생협 홈페이지") -> dict:
     """한 식당의 **세 끼니 전부**.
 
     ★ 학생이 '오늘' 을 물었는데 '아침' 만 답하고 있었다
@@ -315,6 +350,7 @@ def render_meal_day(name: str, answers: list, *, date: str,
     """
     lines = [f"{name} · {date_label(date)}", ""]
     truncated: list[str] = []      # 잘린 끼니 — 갈 길을 열어준다
+    stale_at: str | None = None    # 낡은 끼니가 하나라도 있으면 아래에서 말한다
     for meal_type, a in answers:
         ko = MEAL_KO.get(meal_type, meal_type)
         if a.branch is Branch.A:
@@ -335,6 +371,11 @@ def render_meal_day(name: str, answers: list, *, date: str,
         elif a.branch is Branch.C1:
             # ★ 운영은 하는데 메뉴가 아직 없다. '휴무' 가 아니다.
             lines.append(f"[{ko}] 운영하는데 메뉴가 아직 안 올라왔어요")
+        elif a.reason == "stale":
+            # ★ '못 긁음' 을 '확인 못 했음' 으로 뭉개지 않는다.
+            #   가진 게 있는데 낡은 것과, 아예 없는 것은 다른 말이다.
+            stale_at = stale_at or a.observed_at
+            lines.append(f"[{ko}] 지금 자료로 쓰기 어려워요 (아래 참고)")
         else:
             lines.append(f"[{ko}] 아직 확인하지 못했어요")
     stamp = observed_label(next((a.observed_at for _m, a in answers
@@ -345,8 +386,12 @@ def render_meal_day(name: str, answers: list, *, date: str,
     qr = [kakao.quick_reply(f"{ko} 자세히", f"{name} {ko}") for ko in truncated]
     qr += [kakao.quick_reply("다른 식당", "학식"),
            kakao.quick_reply("처음으로", "처음으로")]
-    return kakao.response([kakao.simple_text("\n".join(lines))],
-                          qr[:kakao.MAX_QUICK_REPLIES])
+    outputs = [kakao.simple_text("\n".join(lines))]
+    if stale_at:
+        # ★ 세 끼니가 다 낡아도 한 번만 말한다. 같은 말 세 번은 정보가 아니다.
+        outputs.append(stale_notice(stale_at, source_url=source_url,
+                                    source_name=source_name))
+    return kakao.response(outputs, qr[:kakao.MAX_QUICK_REPLIES])
 
 
 def render_overview(rows, *, date: str, meal_type: str) -> dict:
@@ -833,8 +878,15 @@ def render_section(result, *, utterance: str = "") -> dict:
             if len(items) < 2:
                 # ★ 겹치는 걸 지우고 나니 하나만 남았다. 그러면 '여러 곳' 이 아니다.
                 #   고를 게 없는데 고르라고 하면 학생을 한 번 더 누르게 만들 뿐이다.
-                header = f"'{subject}' 안내는 여기 있어요"
-                tail = "눌러서 원문을 확인해 주세요."
+                #
+                #   ★ 그렇다고 '여기 있어요' 도 아니다 (2026-08-14 되돌림)
+                #     하나로 줄었다고 그게 답이 되는 건 아니다. 여기까지 온 것은
+                #     검색이 **고르지 못했다**는 뜻이다 (AMBIGUOUS).
+                #     '기숙사 통금' 은 후보가 생활관 게시판 목록 하나였는데
+                #     내가 문구를 바꾸면서 더 단정적으로 틀리게 만들었다.
+                #     찾은 건 보여주되 답이라고는 말하지 않는다.
+                header = f"'{subject}'{J(subject, '으로/로')} 찾은 건 이거예요"
+                tail = "이게 답인지는 확인이 필요해요. 눌러서 원문을 봐 주세요."
             else:
                 header = f"'{subject}' 안내가 여러 곳에 있어요"
                 tail = ("학과마다 내용이 달라요. 어느 학과인지 알려주시면 그곳만 찾아드릴게요."

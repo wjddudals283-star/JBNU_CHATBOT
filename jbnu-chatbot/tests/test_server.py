@@ -101,14 +101,36 @@ def test_B분기_원천이_명시한_미운영(db):
 
 
 def test_T6_25시간_지난_데이터는_C분기(db):
-    """신선도 게이트. 값이 있어도 오래되면 쓰지 않는다."""
+    """신선도 게이트. 값이 있어도 오래되면 쓰지 않는다.
+
+    ★ 그리고 **낡았다는 사실을 말한다** (2026-08-14)
+      전에는 '확인하지 못했어요' 로 뭉갰다. 가진 게 있는데 낡은 것과
+      아예 없는 것은 다른 말이다 — '없다의 갈래' 중 '못 긁음' 이 이 자리다.
+      학생은 '(8/12 확인 기준)' 을 최신으로 읽는다. 그러면 안 된다.
+    """
     late = dt.datetime.fromisoformat("2026-08-11T08:00:00+09:00")  # 26시간 후
     r = server.handle(db, "food.menu.today",
                       _payload("후생관 점심", outlet="후생관", meal_type="점심"),
                       now=late)
-    text = r["template"]["outputs"][0]["simpleText"]["text"]
-    assert "확인하지 못했어요" in text
-    assert SRC in text, "원문 링크는 반드시 같이 나간다"
+    assert kakao.validate(r) == []
+    whole = str(r)
+    assert "지금 자료로 쓰기 어려워요" in whole
+    # 언제 것인지 밝히고, 어디서 최신을 볼지 알려준다
+    assert "그 뒤로 못 가져왔어요" in whole
+    assert "8/10 자료예요" in whole, whole[:300]
+    assert SRC in whole, "원문 링크는 반드시 같이 나간다"
+
+
+def test_낡았다는_말에는_원문_버튼이_붙는다(db):
+    """★ 낡았다고만 하고 갈 길을 안 열면 학생은 아무것도 못 한다."""
+    late = dt.datetime.fromisoformat("2026-08-11T08:00:00+09:00")
+    r = server.handle(db, "food.menu.today",
+                      _payload("후생관 점심", outlet="후생관", meal_type="점심"),
+                      now=late)
+    cards = [o["textCard"] for o in r["template"]["outputs"] if "textCard" in o]
+    assert cards, r["template"]["outputs"]
+    btns = cards[0].get("buttons") or []
+    assert btns and btns[0]["webLinkUrl"] == SRC
 
 
 def test_C분기는_추측한_메뉴를_내놓지_않는다(db):

@@ -437,3 +437,7 @@ def test_하나만_남으면_고르라고_하지_않는다():
     header = resp["template"]["outputs"][0]["listCard"]["header"]["title"]
     assert "여러 곳" not in header, header
     assert "골라" not in text and "어느 쪽" not in text
+    # ★ 하나로 줄었다고 그게 답이 되는 건 아니다.
+    #   여기까지 온 건 검색이 **고르지 못했다**는 뜻이다.
+    assert "여기 있어요" not in header, "더 단정적으로 틀리면 안 된다"
+    assert "확인이 필요해요" in text

@@ -74,6 +74,14 @@ FACILITY_NAME = {
     "jbnu:facility/생활관-식당": "생활관 식당",
 }
 
+# 원문을 뭐라고 부를지. '낡았다' 고 말할 때 어디로 가라고 해야 하기 때문이다.
+SOURCE_NAME = {
+    "jbnu:facility/후생관-푸드코트": "생협 식단표",
+    "jbnu:facility/진수원": "생협 식단표",
+    "jbnu:facility/의대식당": "생협 식단표",
+    "jbnu:facility/생활관-식당": "생활관 홈페이지",
+}
+
 SOURCE_URL = {
     "jbnu:facility/후생관-푸드코트": "https://coopjbnu.kr/menu/week_menu.php",
     "jbnu:facility/진수원": "https://coopjbnu.kr/menu/week_menu.php",
@@ -744,7 +752,8 @@ def _handle_meal(db_path: pathlib.Path, params: dict, detail: dict,
         return templates.render_meal_day(
             FACILITY_NAME.get(facility_id, aliases.canonical_name(facility_id)),
             answers, date=date,
-            source_url=SOURCE_URL.get(facility_id, ""))
+            source_url=SOURCE_URL.get(facility_id, ""),
+            source_name=SOURCE_NAME.get(facility_id, "원문"))
 
     # ── 3. 온톨로지 조회 + 게이트 ──
     conn = repo.connect(db_path, readonly=True)
@@ -762,6 +771,7 @@ def _handle_meal(db_path: pathlib.Path, params: dict, detail: dict,
             date=date, meal_type=meal_type,
             source_url=SOURCE_URL.get(facility_id, ""),
             contact=CONTACT.get(facility_id),
+            source_name=SOURCE_NAME.get(facility_id, "원문"),
             today=now.date().isoformat(),
             has_price_table=has_prices,
         )
