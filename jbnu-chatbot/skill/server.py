@@ -156,10 +156,17 @@ def create_app(db_path: pathlib.Path | None = None, *,
         try:
             c = repo.connect(app.state.db_path)
             try:
-                repo.init_db(c)
+                out = repo.init_db(c)
                 c.commit()
             finally:
                 c.close()
+            # ★ 무엇을 맞췄는지 남긴다. 안 남기면 '맞췄나' 를 다음 오류로 알게 된다.
+            if out.get("added"):
+                log.info("[schema] 컬럼 추가 %s", ", ".join(out["added"]))
+            if out.get("skipped"):
+                # 못 붙인 건 사람이 손으로 옮겨야 한다 — 조용히 넘기지 않는다
+                log.error("[schema] ★ 못 붙인 컬럼 %s — 손으로 옮겨야 한다",
+                          ", ".join(out["skipped"]))
         except Exception as e:  # noqa: BLE001
             log.error("[schema] 보장 실패 — %s: %s", type(e).__name__, e)
 

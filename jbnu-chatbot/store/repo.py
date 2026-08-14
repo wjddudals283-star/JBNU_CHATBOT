@@ -101,9 +101,26 @@ def connect(db_path: str | pathlib.Path = ":memory:", *,
     return conn
 
 
-def init_db(conn: sqlite3.Connection, schema_path: pathlib.Path | None = None) -> None:
-    conn.executescript((schema_path or SCHEMA_PATH).read_text(encoding="utf-8"))
+def init_db(conn: sqlite3.Connection,
+            schema_path: pathlib.Path | None = None) -> dict[str, list[str]]:
+    """스키마를 적용한다 — **표와 컬럼을 둘 다.**
+
+    ★ CREATE TABLE IF NOT EXISTS 는 이미 있는 표에 아무것도 안 한다
+      그래서 컬럼을 추가하면 디스크에 남아 있던 DB 와 어긋난다.
+      두 번 겪었다 (2026-08-14) —
+          council_post 표가 없어서       no such table
+          council_post.categories 가 없어서  no such column
+      스키마는 코드와 함께 배포되지만 **DB 는 디스크에 남는다.**
+
+    ★ 여기 둔 이유 — 들어오는 문이 여럿이다
+      서버 기동 · 크롤러 · 테스트가 전부 init_db 를 부른다.
+      한 군데만 고치면 나머지 문으로 들어온 쪽이 또 터진다.
+    """
+    path = schema_path or SCHEMA_PATH
+    conn.executescript(path.read_text(encoding="utf-8"))
     conn.commit()
+    from store import migrate
+    return migrate.apply(conn, path)
 
 
 def foreign_keys_on(conn: sqlite3.Connection) -> bool:
