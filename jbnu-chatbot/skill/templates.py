@@ -1095,6 +1095,15 @@ def render_council_empty(*, stale: bool = False,
 # 제목을 감싸는 괄호들. 인스타 캡션이 어느 걸 쓸지 우리가 못 정한다.
 _TITLE_WRAP = "[]【】〔〕<>《》「」(){}"
 
+# 제목과 본문 사이에 오는 구분자.
+# ★ 목록이 좁으면 한 글자가 남는다 (2026-08-14)
+#   '-' 만 넣어 뒀는데 실제 캡션이 '[제목] / 모집 기간: …' 이었다.
+#   **한 줄짜리 캡션이 처음 들어온 자리**이기도 하다 — 그전 표본은
+#   제목이 늘 별도 줄이라 줄바꿈이 구분자 노릇을 했다.
+#   어느 기호를 쓸지 총학이 정하는 것이므로 넓게 잡고, 반복(`//`·`--`)과
+#   앞뒤 공백까지 함께 걷어낸다.
+_TITLE_SEP = " \t\r\n/｜|·ㆍ–—-:∙~"
+
 
 def _norm_title(s: str) -> str:
     """제목 비교용 — 공백과 괄호를 지운다.
@@ -1135,7 +1144,8 @@ def strip_leading_title(body: str, title: str) -> str:
         cut = i + 1
     rest = body[cut:]
     # 제목 뒤에 남은 닫는 괄호·구분선·빈 줄을 걷어낸다
-    return rest.lstrip("]】〕>》」)}").lstrip(" \t\r\n-–—·:").strip()
+    # ★ lstrip 은 집합에 든 글자를 **반복해서** 뗀다 — '//' · ' / ' 도 함께 처리된다.
+    return rest.lstrip("]】〕>》」)}").lstrip(_TITLE_SEP).strip()
 
 
 def _council_lines(p: dict) -> list[str]:
