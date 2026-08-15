@@ -11,7 +11,7 @@ import datetime as dt
 import pathlib
 from typing import Any, Callable
 
-from crawler import council_run, notices_run, pages_run
+from crawler import council_run, notices_run, pages_run, vocab
 from store import repo
 
 KST = dt.timezone(dt.timedelta(hours=9))
@@ -72,6 +72,20 @@ def run_notices(db_path: str, cfg: dict, now: dt.datetime) -> dict:
         verbose=False, known_only=True))
 
 
+def run_vocab(db_path: str, cfg: dict, now: dt.datetime) -> Any:
+    """어휘 사전을 다시 만든다.
+
+    ★ 코퍼스가 바뀌면 사전도 바뀌어야 한다
+      새 페이지가 들어왔는데 사전이 옛 판이면, 그 페이지의 낱말로는
+      붙여 쓴 질문을 못 쪼갠다. 조용한 어긋남이다.
+    """
+    conn = repo.connect(db_path)
+    try:
+        return vocab.build(conn, now=now)
+    finally:
+        conn.close()
+
+
 def run_council(db_path: str, cfg: dict, now: dt.datetime) -> Any:
     """총학 공지 시트. ★ 자기가 crawl_run 을 남기므로 _record 로 감싸지 않는다."""
     return council_run.run(pathlib.Path(db_path), now=now)
@@ -81,4 +95,5 @@ JOBS: dict[str, Callable[[str, dict, dt.datetime], Any]] = {
     "pages": run_pages,
     "notices": run_notices,
     "council": run_council,
+    "vocab": run_vocab,
 }

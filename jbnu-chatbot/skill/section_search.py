@@ -259,6 +259,8 @@ def match_site(utterance: str) -> tuple[str | None, str]:
 
 # 요청 종류를 가리키는 말. 분야가 아니라서 제목 검색에 넣으면 안 된다.
 # ★ 언어 표면이다 — 학교 관측이 아니라 '무엇을 달라는 말인가' 다.
+from skill import glued  # noqa: E402
+
 log = logging.getLogger("jbnu.search")
 
 NOTICE_KIND_WORDS = frozenset({"공지", "공지사항", "안내", "소식", "목록", "알림"})
@@ -316,6 +318,10 @@ class SearchResult:
     site_name: str = ""
     missing_tokens: list[str] = field(default_factory=list)  # 못 찾은 낱말
     via_synonym: str = ""     # 다른 이름으로 찾았으면 그 이름 (답에 밝힌다)
+    # ★ 붙여 쓴 말을 쪼개서 찾았으면 그 조각들.
+    #   분해는 검색을 **넓히는** 것이라 확신 등급을 낮춘다 —
+    #   원래 질문 그대로 찾은 것과 같은 무게로 두면 안 된다.
+    via_split: str = ""
     page_level: bool = False  # 섹션을 못 고르겠어서 페이지 단위로 답한다
     section_margin: float = 0.0
     # ★ 후보가 상한에 닿았나. 잘린 상태에서 나온 1등은 안 잘린 1등과
@@ -539,6 +545,28 @@ def search(conn, utterance: str, *, repo) -> SearchResult:
             wide.defer_reason = (f"'{first.site_name}' 로 좁히면 못 찾아서 "
                                  f"전체에서 다시 찾음")
             return wide
+
+    # ★ 붙여 쓴 말을 쪼개서 다시 찾는다 — **못 찾았을 때만**
+    #   등록 발화가 전부 띄어쓴 형태라 '졸업요건' 은 통째로 한 토큰이 되고,
+    #   코퍼스에 그 문자열이 없으면 0건이다. 46문항을 붙여 써 보니
+    #   35/38 건에서 답이 달라졌고 대부분 '못 찾았어요' 였다.
+    #
+    #   ★ 넓히는 방향이므로 **넓히기 전 결과보다 뒤에 둔다.**
+    #     1차에서 찾았으면 여기 오지도 않는다. 여기서 찾은 것은
+    #     via_split 로 표시해 확신 등급을 낮춘다.
+    if first.outcome in (Outcome.NOT_FOUND, Outcome.NO_DATA):
+        vocab = glued.load_vocab(conn)
+        pieces: list[str] = []
+        for t in tokens:
+            got = glued.split(t, vocab)
+            pieces.extend(got if got else [t])
+        if pieces != tokens:
+            log.info("[glued] %s → %s", tokens, pieces)
+            third = _attempt(conn, utterance, pieces, repo=repo, expand={})
+            if third.outcome is Outcome.FOUND:
+                third.via_split = " ".join(pieces)
+                third.defer_reason = f"붙여 쓴 말을 쪼개서 찾음: {' '.join(pieces)}"
+                return third
 
     expand = {t: (expand_token(t) - {t}) for t in tokens}
     expand = {t: v for t, v in expand.items() if v}
