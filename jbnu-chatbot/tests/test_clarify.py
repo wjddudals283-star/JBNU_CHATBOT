@@ -441,3 +441,49 @@ def test_하나만_남으면_고르라고_하지_않는다():
     #   여기까지 온 건 검색이 **고르지 못했다**는 뜻이다.
     assert "여기 있어요" not in header, "더 단정적으로 틀리면 안 된다"
     assert "확인이 필요해요" in text
+
+
+# ═══════════════════════════════════════════════════════════════
+# 형식 안내도 버튼을 준다 — 라벨이 완전한 문구라 상태가 필요 없다
+# ═══════════════════════════════════════════════════════════════
+
+def test_형식안내에_후보_학과_버튼이_붙는다():
+    """★ 되물어 놓고 대답을 못 받고 있었다 (2026-08-15 실측).
+
+    "어느 학과인지" 라고 물으면 사람은 '경제학부' 라고만 답한다.
+    그 한 마디에는 주제가 없어서 새 질문으로 처리됐다.
+        되묻기 13건 중 버튼 11건은 이어짐, 형식 안내 2건은 전부 끊김
+    버튼이 사는 이유는 라벨이 **완전한 문구**라 상태가 필요 없어서다.
+    """
+    r = templates.render_attribute_hint(
+        "졸업요건", "학과", example_site="사학과",
+        candidates=[("사학과", "https://a"), ("경제학부", "https://b"),
+                    ("전북대학교 본부", "https://c")])
+    items = [o["listCard"]["items"] for o in r["template"]["outputs"]
+             if "listCard" in o][0]
+    names = [i["title"] for i in items]
+    assert names == ["사학과", "경제학부"], names
+    # ★ 발화 버튼이 아니라 **링크**다 — button_probe 가 잡았다.
+    #   후보에 오른 학과 3곳이 그 이름으로 다시 물으면 답이 없었다.
+    #   우리가 준 선택지인데 답이 없으면 고장이다. 링크는 그 실패가 불가능하다.
+    assert all(i.get("link") for i in items)
+    assert [q["label"] for q in r["template"]["quickReplies"]] == ["처음으로"]
+
+
+def test_전체_목록이_아니라고_밝힌다():
+    """★ 60곳 중 몇 곳일 뿐이다. 전체처럼 내밀면 나머지에게 틀린 목록이 된다."""
+    r = templates.render_attribute_hint(
+        "졸업요건", "학과", example_site="사학과",
+        candidates=[("사학과", "https://a")])
+    t = [o["simpleText"]["text"] for o in r["template"]["outputs"]
+         if "simpleText" in o][0]
+    assert "전체 목록은 아니에요" in t
+    assert "직접 물어봐 주세요" in t, "목록에 없는 학생의 길도 열어 둔다"
+
+
+def test_후보가_없으면_예시만_준다():
+    """목록을 못 만들면 예전 문안 그대로 — 없는 것을 지어내지 않는다."""
+    r = templates.render_attribute_hint("졸업요건", "학과", candidates=[])
+    assert not any("listCard" in o for o in r["template"]["outputs"])
+    t = r["template"]["outputs"][0]["simpleText"]["text"]
+    assert "붙여서 물어봐 주세요" in t

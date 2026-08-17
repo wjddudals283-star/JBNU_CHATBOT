@@ -683,8 +683,13 @@ def _source_line(hit) -> str:
     return stamp_line(where, when, page_modified=hit.page_modified or "")
 
 
+HQ_SITE_NAME = "전북대학교 본부"
+
+
 def render_attribute_hint(subject: str, attribute: str, *,
-                          example_site: str = "") -> dict:
+                          example_site: str = "",
+                          candidates: list[tuple[str, str]] | None = None
+                          ) -> dict:
     """형식 안내 되묻기 — 답이 학생 속성에 달려 있을 때.
 
     ★ 버튼 되묻기와 구조가 다르다
@@ -697,18 +702,50 @@ def render_attribute_hint(subject: str, attribute: str, *,
       '경영학과 졸업요건' → 학과 페이지 → 그 안에서 전공·복수전공이 형제면
       버튼 되묻기가 이어받는다. 형식 안내(속성) → 버튼(문서 갈래)로 저절로 이어진다.
 
-    ★ 여기서 학과 목록을 보여주지 않는다
-      60곳 중 5곳만 보여주면 나머지 55곳 학생에게는 틀린 목록이다.
-      후보 상한이 만든 숫자를 선택지처럼 내밀면 안 된다.
+    ★ 되물어 놓고 대답을 못 받고 있었다 (2026-08-15 실측)
+      "어느 학과인지 알려주시면" 이라고 물으면 사람은 **'경제학부'** 라고만 답한다.
+      그건 자연스러운 대화다. 그런데 그 한 마디에는 주제가 없어서
+      우리는 새 질문으로 처리했고 교육목표·학과앨범이 나갔다.
+          되묻기 13건 중 버튼 11건은 이어짐, 형식 안내 2건은 **전부 끊김**
+      버튼이 사는 이유는 라벨이 **완전한 문구**('일반 휴학')라 상태가 필요 없어서다.
+
+    ★ 그래서 후보 학과를 버튼으로 준다 — 라벨을 완전한 문구로
+      '경제학부 졸업요건' 을 보내므로 지금 경로가 그대로 처리한다. 상태를 안 만든다.
+
+    ★ 다만 **전체 목록이 아니라고 밝힌다**
+      60곳 중 후보에 오른 몇 곳일 뿐이다. 그걸 전체처럼 내밀면
+      나머지 학생에게는 틀린 목록이 된다. 그래서 문구로 못 박고
+      예시도 그대로 남긴다 — 목록에 없는 학생은 직접 치면 된다.
+      (학식에서 '운영 안 해요' 를 '식단표에 운영없음으로 올라와 있어요' 로
+       바꾼 것과 같은 모양 — 아는 만큼만 말한다)
     """
     # ★ 예시는 **실제로 후보에 오른 학과**를 쓴다. 지어내면 그 이름으로
     #   물었을 때 우리가 못 찾는다 — 학생을 헛걸음시키는 안내가 된다.
-    ex = example_site or "간호대학"
-    text = (f"'{subject}'{J(subject, '은/는')} {attribute}마다 달라요.\n\n"
-            f"'{ex} {subject}'처럼 {attribute}를 붙여서 물어봐 주세요.\n"
-            f"그러면 그 {attribute}의 안내를 그대로 보여드릴게요.")
-    return kakao.response([kakao.simple_text(text)],
-                          [kakao.quick_reply("처음으로")])
+    #   본부는 '학과' 가 아니므로 버튼에서 뺀다.
+    seen: set[str] = set()
+    items: list[dict] = []
+    for name, url in (candidates or []):
+        if not name or not url or name == HQ_SITE_NAME or name in seen:
+            continue
+        seen.add(name)
+        items.append({"title": name, "description": subject, "link": url})
+        if len(items) >= kakao.MAX_LIST_ITEMS:
+            break
+    ex = example_site or (items[0]["title"] if items else "간호대학")
+    lines = [f"'{subject}'{J(subject, '은/는')} {attribute}마다 달라요.", ""]
+    if items:
+        lines.append(f"안내를 찾은 {attribute}예요. 전체 목록은 아니에요.")
+        lines.append(f"여기 없으면 '{ex} {subject}'처럼 직접 물어봐 주세요.")
+    else:
+        lines.append(f"'{ex} {subject}'처럼 {attribute}를 붙여서 물어봐 주세요.")
+        lines.append(f"그러면 그 {attribute}의 안내를 그대로 보여드릴게요.")
+
+    outputs: list[dict] = []
+    if items:
+        card, _ = kakao.list_card(f"{subject} — {attribute}별 안내", items)
+        outputs.append(card)
+    outputs.append(kakao.simple_text("\n".join(lines)))
+    return kakao.response(outputs, [kakao.quick_reply("처음으로")])
 
 
 def render_chosen(label: str, text: str, *, where: str, page_url: str,

@@ -818,9 +818,18 @@ def _handle_section(db_path: pathlib.Path, utterance: str, *,
         # ★ 예시 학과를 지어내지 않는다 — 실제로 후보에 오른 학과를 쓴다.
         #   '경영학과' 라고 썼더니 그 이름의 사이트가 없어서 예시가 안 통했다.
         #   우리가 못 찾는 이름을 예시로 주면 학생을 헛걸음시킨다.
+        # ★ 후보에 오른 학과를 버튼으로 준다 — 라벨이 완전한 문구라
+        #   상태를 안 만들고도 되묻기가 이어진다 (버튼이 사는 이유와 같다).
+        cands: list[tuple[str, str]] = []
+        for h in (result.hits or []):
+            nm = getattr(h, "site_name", "") or ""
+            url = getattr(h, "page_url", "") or ""
+            if nm and url and nm not in [c[0] for c in cands]:
+                cands.append((nm, url))
         return templates.render_attribute_hint(
             result.subject or utterance, result.needs_attribute,
-            example_site=getattr(result.top, "site_name", ""))
+            example_site=getattr(result.top, "site_name", ""),
+            candidates=cands)
 
     # ★ 되묻기 — 문서가 갈래를 갖고 있고 질문이 아무것도 안 골랐을 때만.
     #   섹션을 확신할 때는 건드리지 않는다. 페이지 단위로 내려간 자리만 대체한다.
