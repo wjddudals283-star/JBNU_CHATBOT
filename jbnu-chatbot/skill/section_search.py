@@ -507,7 +507,8 @@ def _dedupe_by_page(hits: list[Hit]) -> list[Hit]:
     return [rep for rep, _, _ in rank_pages(hits)]
 
 
-def search(conn, utterance: str, *, repo) -> SearchResult:
+def search(conn, utterance: str, *, repo,
+           _no_split: bool = False) -> SearchResult:
     """★ 동의어는 **대체 가능**이 아니라 **확장 후보**다.
 
     '졸업요건 ≡ 졸업기준' 은 같은 것이지만 '졸업요건 ≡ 졸업자격인증제' 는
@@ -554,18 +555,24 @@ def search(conn, utterance: str, *, repo) -> SearchResult:
     #   ★ 넓히는 방향이므로 **넓히기 전 결과보다 뒤에 둔다.**
     #     1차에서 찾았으면 여기 오지도 않는다. 여기서 찾은 것은
     #     via_split 로 표시해 확신 등급을 낮춘다.
-    if first.outcome in (Outcome.NOT_FOUND, Outcome.NO_DATA):
+    if not _no_split and first.outcome in (Outcome.NOT_FOUND, Outcome.NO_DATA):
         vocab = glued.load_vocab(conn)
         pieces: list[str] = []
         for t in tokens:
             got = glued.split(t, vocab)
             pieces.extend(got if got else [t])
         if pieces != tokens:
+            spaced = " ".join(pieces)
             log.info("[glued] %s → %s", tokens, pieces)
+            # ★ 재진입(search 를 다시 태우기)을 시도했다가 **되돌렸다** (2026-08-15)
+            #   뒷단계(사이트 좁히기 해제·동의어)가 붙어서 더 나을 줄 알았는데
+            #   실측은 12건 → 10건이었다. 재진입하면 1차에서 이미 진 판정이
+            #   다시 깔리면서 오히려 좁아졌다.
+            #   ★ 좋아 보이는 구조가 실제로 좋은지는 재봐야 안다.
             third = _attempt(conn, utterance, pieces, repo=repo, expand={})
             if third.outcome is Outcome.FOUND:
-                third.via_split = " ".join(pieces)
-                third.defer_reason = f"붙여 쓴 말을 쪼개서 찾음: {' '.join(pieces)}"
+                third.via_split = spaced
+                third.defer_reason = f"붙여 쓴 말을 쪼개서 찾음: {spaced}"
                 return third
 
     expand = {t: (expand_token(t) - {t}) for t in tokens}

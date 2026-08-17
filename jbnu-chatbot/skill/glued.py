@@ -76,6 +76,7 @@ def split(token: str, vocab: dict[str, int]) -> list[str] | None:
         return None                      # 영문·숫자 섞인 것은 다른 문제다
 
     n = len(token)
+    total = max(sum(vocab.values()), len(vocab), 2)
     best: list[tuple[float, int | None]] = [(-1e18, None)] * (n + 1)
     best[0] = (0.0, None)
     for i in range(1, n + 1):
@@ -85,9 +86,16 @@ def split(token: str, vocab: dict[str, int]) -> list[str] | None:
             d = vocab.get(token[j:i])
             if not d:
                 continue
-            # ★ 길고 흔한 조각을 선호한다. 길이를 곱해야 '성적|이|의신청' 처럼
-            #   잘게 부수는 쪽이 안 이긴다.
-            score = best[j][0] + math.log(d) * (i - j)
+            # ★ **드문 조각**을 선호한다 (IDF). 흔한 조각이 아니다.
+            #   흔한 쪽을 선호했더니 '이의신청'(DF 10) 이 사전에 있는데도
+            #   '이의'(46) + '신청'(1,134) 로 쪼갰다 — 9.2 vs 21.7 로 졌다.
+            #   그러면 띄어 쓴 경우와 **토큰이 달라져서** 다른 검색이 된다.
+            #       띄어 씀   ['성적', '이의신청']   → found
+            #       쪼갬      ['성적','이의','신청'] → '신청' 이 흔해 순위 밖
+            #   검색에서 값진 건 드문 낱말이다. 우리 _weights 도 IDF 를 쓴다.
+            #   ★ 조사 문제는 IDF 로도 안전하다 — '의신청' 은 DF 0 이라
+            #     애초에 후보가 아니고, '의' 는 두 글자 미만이라 안 잡힌다.
+            score = best[j][0] + math.log(total / d) * (i - j)
             if score > best[i][0]:
                 best[i] = (score, j)
     if best[n][1] is None:
