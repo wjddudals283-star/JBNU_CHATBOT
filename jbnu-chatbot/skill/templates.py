@@ -724,7 +724,9 @@ def render_attribute_hint(subject: str, attribute: str, *,
     #   본부는 '학과' 가 아니므로 버튼에서 뺀다.
     seen: set[str] = set()
     items: list[dict] = []
-    for name, url in (candidates or []):
+    # ★ 가나다순 — 학생이 읽을 기준을 준다.
+    #   검색 점수 순서는 학생에게 아무 뜻이 없다. 자기 학과를 눈으로 찾는 목록이다.
+    for name, url in sorted(candidates or [], key=lambda c: c[0]):
         if not name or not url or name == HQ_SITE_NAME or name in seen:
             continue
         seen.add(name)

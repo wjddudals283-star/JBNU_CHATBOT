@@ -462,7 +462,8 @@ def test_형식안내에_후보_학과_버튼이_붙는다():
     items = [o["listCard"]["items"] for o in r["template"]["outputs"]
              if "listCard" in o][0]
     names = [i["title"] for i in items]
-    assert names == ["사학과", "경제학부"], names
+    # ★ 가나다순 — 검색 점수 순서는 학생에게 뜻이 없다
+    assert names == ["경제학부", "사학과"], names
     # ★ 발화 버튼이 아니라 **링크**다 — button_probe 가 잡았다.
     #   후보에 오른 학과 3곳이 그 이름으로 다시 물으면 답이 없었다.
     #   우리가 준 선택지인데 답이 없으면 고장이다. 링크는 그 실패가 불가능하다.
