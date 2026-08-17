@@ -29,7 +29,8 @@ from typing import Any
 
 from fastapi import Depends, FastAPI, Request
 
-from skill import (aliases, auth, branch, calendar_search, ingest_api, kakao,
+from skill import (aliases, auth, branch, calendar_search, central,
+                   ingest_api, kakao,
                    manual_answers, section_search,
                    clarify, routing, safety, smalltalk, templates)
 from store import repo
@@ -812,6 +813,14 @@ def _handle_section(db_path: pathlib.Path, utterance: str, *,
     # ★ 형식 안내 되묻기 — 답이 학과에 달려 있을 때.
     #   버튼으로는 안 된다. 학과가 60곳이 넘어서 10개 상한에 안 들어가고,
     #   5곳만 보여주면 나머지 학생에게는 틀린 목록이다.
+    # ★ 학과 되묻기가 **막다른 길**인 주제는 중앙 문서로 보낸다.
+    #   '연계전공' 은 학과 소속이 아니라 학생이 뭘 붙여도 못 닿는다.
+    #   되묻기 앞에 둔다 — 물어봐야 학생이 답할 수 없는 질문이기 때문이다.
+    hub = central.find(utterance)
+    if hub is not None and getattr(result, "needs_attribute", ""):
+        log.info("[central] %s → %s", hub.key, hub.url)
+        return templates.render_central(hub, result.subject or utterance)
+
     if getattr(result, "needs_attribute", ""):
         log.info("[clarify] 형식안내 attr=%s q=%r",
                  result.needs_attribute, utterance[:30])

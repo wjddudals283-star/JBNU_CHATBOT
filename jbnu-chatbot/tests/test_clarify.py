@@ -488,3 +488,25 @@ def test_후보가_없으면_예시만_준다():
     assert not any("listCard" in o for o in r["template"]["outputs"])
     t = r["template"]["outputs"][0]["simpleText"]["text"]
     assert "붙여서 물어봐 주세요" in t
+
+
+# ═══════════════════════════════════════════════════════════════
+# 못 읽는 표는 인용하지 않고 링크만 준다
+# ═══════════════════════════════════════════════════════════════
+
+def test_달력_위젯을_알아본다():
+    """★ '취업 상담' 이 43칸 달력을 인용했다 (2026-08-17).
+
+    ★ 밀도(21.9%)로 자르지 않는다 — 그건 임계값이고 코퍼스가 바뀌면 흔들린다.
+      요일 머리글은 **관측된 표시**다. 원문이 '이 표는 달력이다' 라고 말해 준다.
+    """
+    assert templates.is_calendar_widget(
+        "일 | 월 | 화 | 수 | 목 | 금 | 토 | | | | | | 1 2 | 3 | 4")
+    assert templates.is_calendar_widget(
+        "요일 | 일 | 월 | 화 | 수 | 목 | 금 | 토 | 1 | 2")
+    # 읽히는 표는 건드리지 않는다
+    assert not templates.is_calendar_widget(
+        "등급 | 평점 | 비고(100점 만점) A+ | 4.5 | 95 ~ 100")
+    assert not templates.is_calendar_widget(
+        "구분 | 내용 | 신청기간 개설교과목 신청 | 학과 | 4월")
+    assert not templates.is_calendar_widget("일 | 월")      # 표라기엔 짧다

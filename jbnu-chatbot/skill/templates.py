@@ -178,6 +178,30 @@ def hours_summary(hours: list[dict[str, Any]], *, meal_type: str | None = None) 
     return ", ".join(parts)
 
 
+# 달력 위젯을 알아보는 **관측된 표시** — 요일 머리글이 이어서 나온다.
+# ★ 임계값이 아니다. 밀도로 자르면 코퍼스가 바뀔 때 흔들린다.
+#   원문이 '이 표는 달력이다' 라고 스스로 말해 주는 자리를 쓴다.
+_WEEKDAY_HEAD = ("일", "월", "화", "수", "목", "금", "토")
+
+
+def is_calendar_widget(text: str) -> bool:
+    """요일 머리글이 표 앞머리에 이어서 나오면 달력 격자다.
+
+    ★ '취업 상담' 이 43칸 달력을 인용했다 (2026-08-17)
+      학생이 물은 건 상담 안내지 날짜 격자가 아니다.
+      우리가 표를 그릴 수 없으면 인용하지 않고 링크로 보낸다 —
+      '못 그리겠으면 그리지 마라'.
+    """
+    if not text or text.count("|") < 6:
+        return False
+    cells = [c.strip() for c in text.split("|")]
+    # 앞쪽 어딘가에서 요일 일곱 개가 연달아 나오는지
+    for i in range(min(4, len(cells))):
+        if tuple(cells[i:i + 7]) == _WEEKDAY_HEAD:
+            return True
+    return False
+
+
 CLOSED_MARKER_WORDS = {"운영없음", "미운영", "식사없음"}
 
 
@@ -614,6 +638,26 @@ PAGE_LEVEL_BUDGET = 420     # 페이지로 답할 때 맛보기로 보여줄 글
 SEARCH_HINT = "총학생회에 직접 물어보면 확인해 드릴게요."
 
 
+def _render_unreadable_table(hit, subject: str) -> dict:
+    """표라서 그대로 옮기면 못 읽는 자리 — 인용하지 않고 링크로 보낸다.
+
+    ★ '못 그리겠으면 그리지 마라' (2026-08-17)
+      학식에서 '운영 안 해요'(단정) 를 '식단표에 운영없음으로 올라와 있어요'(근거)
+      로 바꾼 것과 같은 모양이다. 못 읽는 걸 읽는 척 내밀지 않는다.
+      학생은 링크로 원문까지 갈 수 있다 — 답에 닿는 길은 열려 있다.
+    """
+    where = (f"{hit.site_name} · {hit.page_title}" if hit.site_name
+             else hit.page_title)
+    stamp = stamp_line(where, observed_label(hit.observed_at),
+                       page_modified=hit.page_modified or "")
+    lines = [f"'{subject}'{J(subject, '은/는')} 이 문서에 있어요.", "",
+             stamp, "",
+             "그 자리가 날짜 표라서 그대로 옮기면 읽기 어려워요.",
+             "아래에서 확인해 주세요.", hit.page_url]
+    return kakao.response([kakao.simple_text("\n".join(lines))],
+                          [kakao.quick_reply("처음으로")])
+
+
 def _quote_block(hit) -> tuple[str, bool]:
     """인용문과 '잘렸는가'. 자를 때는 문장 경계에서 자른다.
 
@@ -952,6 +996,13 @@ def render_section(result, *, utterance: str = "") -> dict:
     #   틀린 문단을 확신 있게 인용하는 것보다 맞는 페이지를 통째로 보여주는 게 낫다.
     #   학생이 스스로 찾을 수 있으니까. '애매하면 고르지 않는다' 의 적용은
     #   침묵만이 아니다.
+    # ★ 못 읽는 표는 인용하지 않고 링크만 준다 — **두 경로가 같은 규칙을 쓴다**
+    #   처음엔 아래(섹션 인용) 한 곳에만 붙였는데, '취업 상담' 은 page_level 로
+    #   가서 그대로 달력이 나왔다. 한 곳만 고치면 다른 문으로 들어온 쪽이 또 터진다.
+    _q, _c = _quote_block(hit)
+    if is_calendar_widget(_q):
+        return _render_unreadable_table(hit, subject)
+
     if getattr(result, "page_level", False):
         where = f"{hit.site_name} · {hit.page_title}" if hit.site_name else hit.page_title
         head, _ = _quote_block(hit)
@@ -971,6 +1022,15 @@ def render_section(result, *, utterance: str = "") -> dict:
                               [kakao.quick_reply("처음으로")])
 
     quote, clipped = _quote_block(hit)
+
+    # ★ 못 읽는 표는 인용하지 않고 링크만 준다 (2026-08-17)
+    #   '취업 상담' 이 43칸 **달력 위젯**을 인용했다 —
+    #       일 | 월 | 화 | 수 | 목 | 금 | 토 | | | | | | 1 2 | 3 | 4 …
+    #   학생이 물은 건 상담 안내지 날짜 격자가 아니다.
+    #
+    #   ★ 밀도(21.9%)로 자르지 않는다. 그건 임계값이고 코퍼스가 바뀌면 흔들린다.
+    #     요일 머리글은 **관측된 표시**다 — 그 표가 달력이라고 원문이 말해 준다.
+    #     (학식에서 '운영없음' 을 근거로 쓴 것과 같은 모양)
     lines = [f"[{hit.quote_path or hit.path}]"]
     # ★ 다른 이름으로 찾았으면 그 사실을 밝힌다.
     #   '졸업요건' 을 물었는데 '졸업기준' 문서를 찾았을 수 있다.
@@ -1313,3 +1373,25 @@ def render_career(notices: list, council: list, *, days: int = CAREER_RECENT_DAY
         [card, kakao.simple_text("\n".join(tail))],
         [kakao.quick_reply("총학 공지", "총학 공지"),
          kakao.quick_reply("처음으로")])
+
+
+def render_central(topic, subject: str) -> dict:
+    """학과 되묻기가 막다른 길인 주제 — 중앙 문서로 보낸다.
+
+    ★ 되묻지 않는다. 물어봐야 학생이 답할 수 없는 질문이기 때문이다.
+      '연계전공' 은 학과 소속이 아니라서 뭘 붙여도 못 닿는다.
+
+    ★ 문서에 무엇이 있는지 말해 준다 — **우리가 본 것만.**
+      "이 표에 있어요" 만 하면 학생은 눌러야 알 수 있다.
+      우리가 본 것(주관학과·이수학점·적용연도)을 적으면 누를지 정할 수 있다.
+    """
+    lines = [f"'{subject}'{J(subject, '은/는')} 학과별로 나뉘어 있지 않아요.", ""]
+    if topic.holds:
+        lines.append(f"{topic.label} 안내에 "
+                     f"{topic.holds}{J(topic.holds, '이/가')} 표로 있어요.")
+    else:
+        lines.append(f"{topic.label} 안내에 있어요.")
+    lines += ["", "표라서 그대로 옮기면 읽기 어려워요. 아래에서 확인해 주세요.",
+              topic.url]
+    return kakao.response([kakao.simple_text("\n".join(lines))],
+                          [kakao.quick_reply("처음으로")])
