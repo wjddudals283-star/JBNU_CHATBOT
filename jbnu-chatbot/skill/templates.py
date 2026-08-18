@@ -573,13 +573,25 @@ def render_calendar_item(result, *, today: str, source_url: str,
             [kakao.quick_reply("학사일정 전체", "학사일정"),
              kakao.quick_reply("처음으로")])
     head = ranked[0]
-    lines = [f"{label} — {_period_text(head)}이에요.",
+    lines = [f"{label} — {_period_text(head, d0)}{_past_tag(head, d0)}이에요.",
              f"· {head['title']}"]
     if len(ranked) > 1:
         lines.append("")
         lines.append("관련 일정도 있어요.")
+        # ★ 지난 일정을 **지났다고 밝힌다** (2026-08-18)
+        #   개강 앞둔 학생이 '2026학년도 제2학기 수강신청 — 7/30' 을 보면
+        #   "내가 놓쳤나" 한다. 맨 위 답은 정확한데 그 아래가 학생을 흔들었다.
+        #
+        #   ★ 빼지는 않는다 — 취업 공지와 **다른 자리**다
+        #     취업은 '지원할 수 있나' 가 전부라 지난 건 쓸모없다.
+        #     학사일정은 '수강신청 언제였지' 도 유효한 질문이다 (rank 의 주석).
+        #     그리고 재보니 수강신청변경·개강은 후보가 2개뿐이라
+        #     지난 것을 빼면 관련 일정이 **0개**가 된다.
+        #     실측: 자료가 있는 주제 8개 중 6개에 지난 게 섞인다.
+        #
+        #   순서는 rank 가 이미 뒤로 밀어 뒀다. 여기서는 **말로 밝히기만** 한다.
         for e in ranked[1:4]:
-            lines.append(f"· {e['title']} — {_period_text(e)}")
+            lines.append(f"· {e['title']} — {_period_text(e, d0)}{_past_tag(e, d0)}")
     if result.topic and result.topic.see_also:
         lines += ["", f"※ {result.topic.see_also}에 별도 안내가 있을 수 있어요."]
     if observed_at:
@@ -591,12 +603,30 @@ def render_calendar_item(result, *, today: str, source_url: str,
          kakao.quick_reply("오늘 학식")])
 
 
-def _period_text(e: dict) -> str:
+def _past_tag(e: dict, today: dt.date) -> str:
+    """이미 끝난 일정이면 '(지났어요)'. 아니면 빈 문자열.
+
+    ★ 날짜만 보여 주면 학생이 지난 건지 앞으로 올 건지 모른다.
+      '7/30' 은 8/18 에는 지난 날이지만 화면에서는 똑같이 생겼다.
+      우리는 오늘을 알고 학생은 화면만 본다 — 아는 쪽이 말해야 한다.
+    """
+    end = dt.date.fromisoformat(e.get("end_date") or e["start_date"])
+    return " (지났어요)" if end < today else ""
+
+
+def _period_text(e: dict, today: dt.date | None = None) -> str:
+    """'9/1~9/7'. ★ 해가 다르면 해를 밝힌다 — '2/1' 만 보면 언제인지 모른다.
+
+    실제로 8/18 화면에 '2027학년도 제1학기 예비 수강신청 — 2/1' 이 나갔다.
+    제목에 2027 이 있어서 읽을 수는 있지만, 날짜만 보는 학생에게 2/1 은
+    다음 주처럼 보인다. 오늘을 아는 쪽이 말해야 한다.
+    """
     s = dt.date.fromisoformat(e["start_date"])
+    head = f"{s.year}년 " if today and s.year != today.year else ""
     if e.get("end_date"):
         t = dt.date.fromisoformat(e["end_date"])
-        return f"{s.month}/{s.day}~{t.month}/{t.day}"
-    return f"{s.month}/{s.day}"
+        return f"{head}{s.month}/{s.day}~{t.month}/{t.day}"
+    return f"{head}{s.month}/{s.day}"
 
 
 def _dday(today: dt.date, start: dt.date, end: dt.date | None) -> str:
