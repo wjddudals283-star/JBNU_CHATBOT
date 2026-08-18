@@ -27,6 +27,10 @@ MEAL_KO = {"breakfast": "아침", "lunch": "점심", "dinner": "저녁"}
 # 학사일정을 넓혀 볼 수 있는 최대 폭. 버튼 문구와 서버의 상한이 **같은 수**여야
 # 한다 — 다르면 버튼이 못 지킬 약속을 하게 된다.
 MAX_UPCOMING_DAYS = 90
+# '이번 달' 이 며칠인가. ★ 버튼 문구와 서버가 **같은 수**를 봐야 한다 —
+#   서버가 31 로 못 받으면 우리가 붙인 '이번 달 전체' 버튼이 거짓말을 한다.
+#   (MAX_UPCOMING_DAYS 를 한 곳에 둔 것과 같은 이유다)
+MONTH_DAYS = 31
 
 
 def observed_label(iso: str | None) -> str:
@@ -511,10 +515,23 @@ def render_upcoming(rows, *, today: str, days: int, source_url: str,
     outputs = [card]
     if observed_at:
         outputs.append(kakao.simple_text(f"{observed_label(observed_at)} 기준"))
-    return kakao.response(outputs, [
-        kakao.quick_reply("이번 달 전체", "이번 달 학사일정"),
-        kakao.quick_reply("오늘 학식"),
-    ])
+    # ★ 같은 고장을 **빈 목록 분기에서만** 고쳤었다 (2026-08-18)
+    #   30줄 위에 '이미 최대로 넓혀 놓고 또 넓히자고 하지 않는다' 가 있는데,
+    #   목록이 있는 쪽에는 안 붙었다. 그래서 '이번 달 학사일정'(31일)을 보는
+    #   학생에게 '이번 달 전체' 버튼이 또 나가고, 누르면 같은 화면이 왔다.
+    #   버튼이 자기 자신을 내놓는 건 '못 찾았어요' 보다 나쁘다 —
+    #   우리가 준 선택지인데 학생을 제자리에 묶는다.
+    #
+    #   ★ 늘 **한 칸 더 넓히는 길**을 준다. 막다른 화면을 만들지 않는다.
+    #       14일 → '이번 달 전체'   31일 → '앞으로 90일'   90일 → 없음(최대)
+    qr = []
+    if days < MONTH_DAYS:
+        qr.append(kakao.quick_reply("이번 달 전체", "이번 달 학사일정"))
+    elif days < MAX_UPCOMING_DAYS:
+        qr.append(kakao.quick_reply(f"앞으로 {MAX_UPCOMING_DAYS}일",
+                                    f"학사일정 {MAX_UPCOMING_DAYS}일"))
+    qr.append(kakao.quick_reply("오늘 학식"))
+    return kakao.response(outputs, qr)
 
 
 def render_calendar_item(result, *, today: str, source_url: str,

@@ -1018,7 +1018,7 @@ def _resolve_days(params: dict, utterance: str) -> int:
     if m:
         return max(1, min(int(m.group(1)), cap))
     if "이번 달" in (utterance or "") or "이번달" in (utterance or ""):
-        return 31
+        return templates.MONTH_DAYS
     return UPCOMING_DEFAULT_DAYS
 
 
