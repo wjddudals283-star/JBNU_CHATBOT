@@ -87,6 +87,7 @@ class _ManualResult:
         self.defer_reason = ""
         self.page_level = False
 from store import repo  # noqa: E402
+from tools import answer_path  # noqa: E402
 
 A, D = "answer", "defer"
 
@@ -399,6 +400,9 @@ def main(argv: list[str] | None = None) -> int:
         print()
 
         rows, lat = [], []
+        # ★ 어느 갈래로 갔는지 세어 둔다. 새 경로가 생기면 여기서 보인다.
+        routes: collections.Counter = collections.Counter()
+        unreadable: list[tuple[str, str, str]] = []
         verdicts: collections.Counter = collections.Counter()
         review = load_review()
         skipped_short = []
@@ -422,13 +426,19 @@ def main(argv: list[str] | None = None) -> int:
             # 공지는 제목 검색이 담당한다. 같은 잣대로 잰다.
             # ★ 총학이 직접 확인한 답이 먼저다 — 서버 라우팅과 같은 순서로 잰다.
             #   재는 자가 실제 경로와 다르면 측정이 거짓말을 한다.
-            manual = manual_answers.find(q)
-            if manual is not None:
-                r = _ManualResult(manual)
-            elif topic == "공지":
-                r = ss.search_notices(conn, q, repo=repo)
-            else:
-                r = ss.search(conn, q, repo=repo)
+            # ★ 갈래를 **흉내내지 않고 끌어온다** (2026-08-18)
+            #   여기서 topic=="공지" 로 갈랐더니 '수강신청 언제야' 를
+            #   검색으로 쟀다. 학생은 학사일정으로 간다 —
+            #   받지도 않는 답을 채점하고 있었다. 같은 병이 두 번째다.
+            #   이제 tools/answer_path 가 server.route_of 를 그대로 부른다.
+            obs = answer_path.observe(conn, q, db_path=args.db)
+            routes[(obs.route, obs.why)] += 1
+            if not obs.readable:
+                # ★ 자가 모르는 갈래. 검색으로 떨어뜨리지 않는다 —
+                #   그러면 '재고 있다' 는 착각만 남는다.
+                unreadable.append((q, obs.route, obs.why))
+                continue
+            r = obs.result
             ms = (time.perf_counter() - t0) * 1000
             lat.append(ms)
             v, why = judge(q, expect, must, r)
@@ -546,6 +556,24 @@ def main(argv: list[str] | None = None) -> int:
             print(f"\n★ 수요 가중 정확도 {num/den:.0%}   (균등 {ok/n:.0%})")
         # ★ 틀린 것과 놓친 것을 같은 무게로 세지 않는다.
         #   놓치면 학생이 다른 데를 찾는다. 틀리면 잘못된 곳으로 간다.
+        # ★ 어느 갈래로 갔는지 **매번 찍는다** (2026-08-18)
+        #   경로 어긋남을 두 번 다 사람이 눈으로 발견했다.
+        #   갈래는 이제 server.route_of 에서 끌어오므로 어긋날 수 없지만,
+        #   **새 경로가 생긴 것**은 여기 새 줄로 보인다. 눈으로 안 찾아도 된다.
+        print("\n" + "─" * 58)
+        print("어느 갈래로 갔나 — 서버 route_of 가 정한 그대로")
+        for (route, why), n in routes.most_common():
+            print(f"   {route:20} {n:>3}건   ({why})")
+        if unreadable:
+            print(f"\n   ★ 자가 못 읽는 갈래 {len(unreadable)}건 — "
+                  f"**판정에서 빠졌다**")
+            for q, route, why in unreadable:
+                print(f"      {q:16} → {route} ({why})")
+            print("      이 갈래를 재려면 tools/answer_path.py 에 한 칸 붙인다.")
+        else:
+            print("\n   ★ 자가 못 읽는 갈래 없음")
+        print("─" * 58 + "\n")
+
         print(f"★ 확신하고 틀린 것 {verdicts[WRONG]}건 — 이게 0에 가까워야 배포할 수 있다")
 
         # ★ 안전하지만 쓸모없는 칸을 따로 본다 — 자족성이 노리는 자리다

@@ -38,6 +38,7 @@ if str(ROOT) not in sys.path:
 from skill import section_search as ss  # noqa: E402
 from store import repo                  # noqa: E402
 from skill import manual_answers  # noqa: E402
+from tools import answer_path  # noqa: E402
 from tools.answerability_report import QUESTIONS, load_review  # noqa: E402
 
 HEADER = ["질문", "봇이 낸 문서", "URL", "인용 앞부분", "의심",
@@ -71,18 +72,21 @@ def main(argv: list[str] | None = None) -> int:
         #   처음엔 전부 안내 검색으로 뽑았는데, 공지 문항은 서버가
         #   제목 검색을 쓴다. 그러면 대표가 **실제 답이 아닌 것**을 검수하게 된다.
         #   재는 자가 실제 경로와 다르면 측정이 거짓말을 한다 — 리포트에 적힌 그대로다.
-        manual = manual_answers.find(q)
-        if manual is not None:
-            rows.append([q, "총학 확인 답 (T4)", "", manual.answer[:80],
-                         "", "", "", "총학이 직접 확인한 답입니다"])
+        # ★ 갈래를 **끌어온다** — 여기서 if 를 적으면 또 어긋난다 (2026-08-18)
+        #   공지만 고쳤더니 이번엔 학사일정이 어긋났다. 같은 병 두 번째다.
+        #   이제 tools/answer_path 가 server.route_of 를 그대로 부른다.
+        obs = answer_path.observe(conn, q, db_path=args.db)
+        r = obs.result
+        if r is None:
+            rows.append([q, f"(자가 못 읽는 갈래: {obs.route})", "", "",
+                         "", "", "", f"why={obs.why}"])
             continue
-        r = (ss.search_notices(conn, q, repo=repo) if topic == "공지"
-             else ss.search(conn, q, repo=repo))
         top = getattr(r, "top", None) or (r.hits[0] if getattr(r, "hits", None) else None)
         if r.outcome is not ss.Outcome.FOUND or top is None:
-            rows.append([q, "(답 못 함)", "", "", "", "", "", ""])
+            rows.append([q, "(답 못 함)", "", "", "", "", "",
+                         f"{obs.route} · {obs.why}"])
             continue
-        if topic == "공지":
+        if obs.kind == "notices":
             # 공지는 제목·게시판만 있다. 본문을 안 읽는 게 설계다.
             doc = " · ".join(x for x in (getattr(top, "site_name", ""),
                                          getattr(top, "board_name", "")) if x)
@@ -93,7 +97,7 @@ def main(argv: list[str] | None = None) -> int:
             doc = " · ".join(x for x in (top.site_name, top.page_title) if x)
             where = f"{top.site_name} {top.page_title} {top.quote_path or top.path}"
             quote = " ".join((top.quote_text or top.text or "").split())[:80]
-            url = top.page_url
+            url = getattr(top, "page_url", "") or ""
         prev = review.get(q) or {}
         ox = "O" if prev.get("ok") is True else ("X" if prev.get("ok") is False else "")
         sus = suspicious(q, where)
@@ -102,7 +106,9 @@ def main(argv: list[str] | None = None) -> int:
         #   그건 틀렸다는 뜻이 아니다. 그 사실을 여기 적어 두지 않으면
         #   대표가 ❗ 를 보고 X 를 찍게 된다.
         memo = prev.get("note") or ""
-        if topic == "공지":
+        # ★ 어느 갈래로 갔는지 시트에 남긴다 — 대표가 "이건 검색이 아니네" 를 볼 수 있다.
+        memo = (memo + " " if memo else "") + f"[{obs.route}]"
+        if obs.kind == "notices":
             # ★ 공지는 **제목만** 보는 자리다. 본문을 안 읽으니
             #   '문서 제목이 질문과 맞나' 로 판단하시면 됩니다.
             memo = ((memo + " ") if memo else "") +                 "(공지 검색이라 제목·게시일·링크만 냅니다. 본문은 안 읽어요)"
