@@ -32,6 +32,7 @@ from enum import Enum
 from typing import Any, Sequence
 
 from skill import selfcontained
+from urllib.parse import urlsplit
 
 # 질문을 이루지만 내용은 없는 말. 이것만 남으면 무엇을 묻는지 모르는 것이다.
 STOPWORDS = {
@@ -498,8 +499,48 @@ def rank_pages(hits: list[Hit]) -> list[tuple[Hit, list[Hit], float]]:
         rep = secs[0]
         rep.page_score = max(h.page_score for h in secs)
         out.append((rep, secs, margin))
-    out.sort(key=lambda x: (-x[0].page_score, len(x[0].text)))
+    out.sort(key=lambda x: (-x[0].page_score, *_tiebreak(x[0], len(x[1])),
+                            len(x[0].text)))
     return out
+
+
+def _title_fit(title: str, matched: list[str]) -> tuple[int, int]:
+    """(제목이 담은 낱말 수 · 덧붙은 글자 수). 앞은 클수록 · 뒤는 작을수록 좋다.
+
+    ★ '군더더기' 는 임계값이 아니라 뺄셈이다.
+      질문이 '교수' 일 때 제목 '교수' 는 군더더기 0,
+      '명예교수' 는 2, '평생지도교수제' 는 5.
+    """
+    t = title or ""
+    hit = [w for w in (matched or []) if w in t]
+    return (len(hit), len(t) - sum(len(w) for w in hit))
+
+
+def _tiebreak(rep: Hit, n_leaves: int) -> tuple:
+    """점수가 **똑같을 때** 무엇을 앞에 둘 것인가.
+
+    ★ 이걸 왜 넣었나 (2026-08-18)
+      ⚠️ 로 잡힌 5건을 화면에서 확인했더니 셋의 원인이 하나였다.
+      점수가 낮아서가 아니라 **1등이 동점**이라 SQL 이 준 순서가 답이 됐다.
+          기계공학과 교수   4.04  명예교수 / 평생지도교수제 / 교수 / 교수진
+          증명서 발급     144.18  행동강령 / FAQ("써트피아"로 증명서 발급)
+          취업 상담         동점  212호 / 213호 / 214호 개별상담실
+      답한 38건 중 19건이 동점이었다. 개별 버그가 아니라 구조다.
+      문턱을 낮춰도 안 풀린다 — 문턱 문제가 아니기 때문이다.
+
+    ★ 세 기준 다 관측이다. 임계값도 목록도 없다
+      ① 제목이 질문 낱말을 담되 **군더더기가 적은가**
+      ② 이 문서에 **잎이 여러 개** 걸렸나 (한 군데 스친 것보다 낫다)
+      ③ **상위 페이지**인가 (개별 상담실 방보다 상담 안내가 위다)
+      앞 기준이 갈리면 뒤는 안 본다.
+
+    ★ 점수가 다르면 아무 일도 안 한다 — 정렬 키의 **뒤쪽**이라
+      동점 덩어리 안에서만 순서를 바꾼다. 19건 중 4건이 움직였고
+      나머지 15건은 지금 1등이 이 규칙과 같았다 (tools/tiebreak_probe.py).
+    """
+    fit_n, extra = _title_fit(rep.page_title, rep.matched)
+    depth = len([p for p in urlsplit(rep.page_url or "").path.split("/") if p])
+    return (-fit_n, extra, -n_leaves, depth)
 
 
 def _dedupe_by_page(hits: list[Hit]) -> list[Hit]:
