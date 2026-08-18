@@ -80,13 +80,38 @@ def topic_pairs(path: pathlib.Path | None = None) -> list[tuple[str, Topic]]:
 
 
 def find_topic(utterance: str, path: pathlib.Path | None = None) -> Topic | None:
+    """★ 별칭이 **낱말 안쪽**에 걸리면 안 된다 (2026-08-18)
+
+    '시험' 을 별칭에 넣어야 '시험 언제' 가 학사일정으로 간다 —
+    학생이 제일 많이 묻는 축인데 지금은 검색 되묻기로 샌다.
+    그런데 그냥 넣으면 '종합시험'(공지 88건)·'외국어시험'(29건)·
+    '임용시험'·'자격시험' 이 전부 걸리고, title_keywords 가
+    [중간시험, 기말시험] 이라 **중간시험 완료로 답한다.** 확신 오답이다.
+
+    같은 병을 이미 두 번 봤다 (학자금 대출 · 인**공지**능).
+    tools/alias_traps.py 가 쓰는 잣대를 여기에도 붙인다 —
+    앞 글자가 한글이면 그건 다른 낱말의 일부다.
+
+        시험 언제      → 걸린다 (앞이 문장 처음)
+        종합시험 언제   → 안 걸린다 ('합' 뒤)
+        동아리 등록 기간 → 안 걸린다 ('리' 뒤)   ← '등록' 덫도 같이 막힌다
+
+    ★ 뒤는 안 본다. '시험기간' · '수강신청기간' 처럼 뒤에 말이 붙는 건
+      우리말에서 자연스럽고, 실제로 그렇게 묻는다.
+    """
     u = _norm(utterance)
     if not u:
         return None
     for alias, topic in topic_pairs(path):
-        if alias in u:
-            return topic
+        i = u.find(alias)
+        while i != -1:
+            if i == 0 or not _HANGUL.match(u[i - 1]):
+                return topic
+            i = u.find(alias, i + 1)
     return None
+
+
+_HANGUL = re.compile(r"[가-힣]")
 
 
 def search(entries: list[dict[str, Any]], utterance: str, *,
