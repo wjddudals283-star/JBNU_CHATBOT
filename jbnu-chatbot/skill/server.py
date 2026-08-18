@@ -29,6 +29,7 @@ from typing import Any
 
 from fastapi import Depends, FastAPI, Request
 
+from skill import career
 from skill import (aliases, auth, branch, calendar_search, central,
                    ingest_api, kakao,
                    manual_answers, section_search,
@@ -654,6 +655,8 @@ def _handle_council_category(db_path: pathlib.Path, category: str,
 
 
 CAREER_DAYS = 30
+# 화면에 5줄을 채우려고 30일치를 다 꺼내 온다 — 자르기는 맨 마지막이다.
+CAREER_POOL = 300
 
 
 def _handle_career(db_path: pathlib.Path, *,
@@ -674,12 +677,26 @@ def _handle_career(db_path: pathlib.Path, *,
     try:
         council = repo.council_by_category(
             conn, "취업·비교과", today=today.isoformat())
-        notices = repo.recent_career_notices(conn, since=since)
+        # ★ 넉넉히 꺼낸 다음 고른다 (2026-08-18)
+        #   처음엔 기본값(10건)만 꺼내 놓고 '활동 먼저' 정렬을 걸었다.
+        #   그러면 **최신 10건 안에서만** 순서가 바뀐다 — 활동 46건은
+        #   30일치 123건에 흩어져 있으니 고를 후보를 안 준 셈이다.
+        #   자르는 건 정렬·거르기가 **끝난 뒤**여야 한다.
+        notices = repo.recent_career_notices(conn, since=since,
+                                             limit=CAREER_POOL)
     finally:
         conn.close()
-    log.info("[career] 총학 %s건 · 학교공지 %s건 (최근 %s일)",
-             len(council), len(notices), CAREER_DAYS)
-    return templates.render_career(notices, council, days=CAREER_DAYS)
+    # ★ 끝난 공고를 뺀다 — 근거는 **원문이 제목에 적어 준 마감일**이다
+    #   notice_item 에 마감 칸이 없다. 그런데 최근 30일 123건 중 21건이
+    #   제목에 '(~8/18)' 처럼 적어 놨다. 우리가 지어낸 값이 아니라 학교가 쓴 값이다.
+    #   제목에 마감이 없으면 **안 뺀다** — 모르는 걸 지났다고 말하지 않는다.
+    raw = len(notices)
+    notices, dropped = career.sort_and_filter(notices, today=today)
+    log.info("[career] 총학 %s건 · 학교공지 %s→%s건 (최근 %s일) · 뺀 것 %s",
+             len(council), raw, len(notices), CAREER_DAYS,
+             " ".join(f"{k} {v}건" for k, v in dropped.items() if v) or "없음")
+    return templates.render_career(notices, council, days=CAREER_DAYS,
+                                   excluded=dropped["마감 지남"])
 
 
 COUNCIL_STALE_HOURS = 24.0

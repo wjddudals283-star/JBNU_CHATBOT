@@ -17,6 +17,7 @@ from __future__ import annotations
 import datetime as dt
 from typing import Any
 
+from skill import career
 from skill import kakao
 from skill.josa import attach as J
 from skill.branch import Branch, MealAnswer
@@ -1326,7 +1327,7 @@ CAREER_RECENT_DAYS = 30
 
 
 def render_career(notices: list, council: list, *, days: int = CAREER_RECENT_DAYS,
-                  instagram: str = COUNCIL_INSTAGRAM) -> dict:
+                  instagram: str = COUNCIL_INSTAGRAM, excluded: int = 0) -> dict:
     """최근 취업·비교과 공지 목록.
 
     ★ '지금 신청 가능' 이라고 부르지 않는다 — **우리는 마감을 모른다**
@@ -1354,11 +1355,20 @@ def render_career(notices: list, council: list, *, days: int = CAREER_RECENT_DAY
         if p.get("link"):
             item["link"] = p["link"]
         items.append(item)
+    # ★ 활동이 먼저다 (2026-08-18 실측 · 대표 정의)
+    #   최근 30일 123건 중 학생이 지원할 수 있는 활동은 46건이고
+    #   나머지는 직원 채용이다. 대표가 "대부분 취업에 도움되는 활동들" 이라 했다.
+    #   버리지는 않는다 — **순서를 준다.** 정렬은 career.sort_and_filter 가 한다.
+    #
+    # ★ 화면에 '활동/채용' 을 적는다
+    #   목록에 학생이 읽을 기준이 없으면 그냥 긴 제목 열 줄이다.
+    #   우리가 매긴 딱지가 아니라 제목에 적힌 낱말로 가른 것이라 말할 수 있다.
     for n in notices:
         d = (n.get("published_at") or "")[:10]
-        item = {"title": n["title"],
-                "description": f"{date_label(d)} 게시" if d else
-                               (n.get("board_name") or "")}
+        kind = "활동" if career.is_activity(n.get("title") or "") else "채용"
+        bits = [x for x in (f"{date_label(d)} 게시" if d else
+                            (n.get("board_name") or ""), kind) if x]
+        item = {"title": n["title"], "description": " · ".join(bits)}
         if n.get("url"):
             item["link"] = n["url"]
         items.append(item)
@@ -1367,6 +1377,10 @@ def render_career(notices: list, council: list, *, days: int = CAREER_RECENT_DAY
         f"최근 {days}일 취업·비교과 공지", items[:kakao.MAX_LIST_ITEMS])
     tail = [f"최근 {days}일 안에 올라온 취업 관련 공지예요.",
             "마감은 각 공지에서 확인해 주세요."]
+    # ★ 뺀 것을 학생에게도 한 줄로 말한다 (조용히 줄이지 않는다)
+    #   제목에 적힌 마감이 지난 것만 뺐다 — 제목에 마감이 없으면 안 뺐다.
+    if excluded:
+        tail.insert(1, f"(마감이 지난 것 {excluded}건은 뺐어요)")
     if dropped:
         tail.insert(1, f"({len(items)}건 중 {len(items) - dropped}건만 보여드려요)")
     return kakao.response(
