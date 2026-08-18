@@ -37,6 +37,7 @@ if str(ROOT) not in sys.path:
 
 from skill import section_search as ss  # noqa: E402
 from store import repo                  # noqa: E402
+from skill import manual_answers  # noqa: E402
 from tools.answerability_report import QUESTIONS, load_review  # noqa: E402
 
 HEADER = ["질문", "봇이 낸 문서", "URL", "인용 앞부분", "의심",
@@ -63,21 +64,50 @@ def main(argv: list[str] | None = None) -> int:
     review = load_review()
 
     rows = []
-    for _t, q, expect, _must in QUESTIONS:
+    for topic, q, expect, _must in QUESTIONS:
         if expect != "answer":
             continue          # 답하면 안 되는 문항은 검수할 문서가 없다
-        r = ss.search(conn, q, repo=repo)
-        top = getattr(r, "top", None)
+        # ★ 본 측정과 **같은 경로**로 물어야 한다 (2026-08-18)
+        #   처음엔 전부 안내 검색으로 뽑았는데, 공지 문항은 서버가
+        #   제목 검색을 쓴다. 그러면 대표가 **실제 답이 아닌 것**을 검수하게 된다.
+        #   재는 자가 실제 경로와 다르면 측정이 거짓말을 한다 — 리포트에 적힌 그대로다.
+        manual = manual_answers.find(q)
+        if manual is not None:
+            rows.append([q, "총학 확인 답 (T4)", "", manual.answer[:80],
+                         "", "", "", "총학이 직접 확인한 답입니다"])
+            continue
+        r = (ss.search_notices(conn, q, repo=repo) if topic == "공지"
+             else ss.search(conn, q, repo=repo))
+        top = getattr(r, "top", None) or (r.hits[0] if getattr(r, "hits", None) else None)
         if r.outcome is not ss.Outcome.FOUND or top is None:
             rows.append([q, "(답 못 함)", "", "", "", "", "", ""])
             continue
-        doc = " · ".join(x for x in (top.site_name, top.page_title) if x)
-        where = f"{top.site_name} {top.page_title} {top.quote_path or top.path}"
-        quote = " ".join((top.quote_text or top.text or "").split())[:80]
+        if topic == "공지":
+            # 공지는 제목·게시판만 있다. 본문을 안 읽는 게 설계다.
+            doc = " · ".join(x for x in (getattr(top, "site_name", ""),
+                                         getattr(top, "board_name", "")) if x)
+            where = f"{doc} {top.title}"
+            quote = top.title
+            url = top.url
+        else:
+            doc = " · ".join(x for x in (top.site_name, top.page_title) if x)
+            where = f"{top.site_name} {top.page_title} {top.quote_path or top.path}"
+            quote = " ".join((top.quote_text or top.text or "").split())[:80]
+            url = top.page_url
         prev = review.get(q) or {}
         ox = "O" if prev.get("ok") is True else ("X" if prev.get("ok") is False else "")
-        rows.append([q, doc, top.page_url, quote, suspicious(q, where),
-                     ox, prev.get("expected") or "", prev.get("note") or ""])
+        sus = suspicious(q, where)
+        # ★ 메모를 미리 채운다 — 대표가 O/X 찍을 때 헷갈리지 않게.
+        #   공지 검색은 **제목만** 보는 자리라 문서 제목이 비어서 ❗ 가 붙는다.
+        #   그건 틀렸다는 뜻이 아니다. 그 사실을 여기 적어 두지 않으면
+        #   대표가 ❗ 를 보고 X 를 찍게 된다.
+        memo = prev.get("note") or ""
+        if topic == "공지":
+            # ★ 공지는 **제목만** 보는 자리다. 본문을 안 읽으니
+            #   '문서 제목이 질문과 맞나' 로 판단하시면 됩니다.
+            memo = ((memo + " ") if memo else "") +                 "(공지 검색이라 제목·게시일·링크만 냅니다. 본문은 안 읽어요)"
+        rows.append([q, doc, url, quote, sus,
+                     ox, prev.get("expected") or "", memo])
     conn.close()
 
     out = pathlib.Path(args.out)
