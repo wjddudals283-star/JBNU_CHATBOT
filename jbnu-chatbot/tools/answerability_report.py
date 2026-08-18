@@ -281,9 +281,58 @@ def _would_clarify(conn, q: str, r) -> bool:
 #   모름과 같이 세면 형식 안내를 붙여도 숫자가 안 움직인다.
 SURE, PAGE_Q, PAGE, THIN, ATTR, MISS, WRONG, DEFER_OK = (
     "확신", "문서+발췌", "문서만", "쓸모없음", "형식안내", "모름", "틀림", "보류OK")
+# ★ '문서 미확인' — 답은 했는데 **맞는 문서인지 사람이 확인 안 한 것** (2026-08-17)
+#   '성적 이의신청' 이 문서+발췌로 통과 중인데 나오는 건 **정보공개 이의신청**(행정)
+#   문서다. 학생이 물은 건 학사 이의신청이다.
+#   must('이의') 가 인용에 있으니 통과했다 — 자가 '문서를 찾았는가' 만 봤다.
+#
+#   ★ 문자열로는 못 가른다. 학사 이의신청과 행정 이의신청은 낱말이 겹친다.
+#     판정에 생성 모델을 쓰면 그 자를 검증할 자가 또 필요해진다 —
+#     오늘 하루 종일 부딪힌 게 그것이다.
+#   그래서 **사람이 확인한 것과 안 한 것을 갈라 센다.** 자를 고치는 게 아니라
+#   칸을 쪼갠다. 85% → 37% 때와 같은 수법이다.
+UNVERIFIED = "문서미확인"
 # 정답으로 세는 칸. ★ '문서까지' 와 '쓸모없음' 은 안 센다 —
 #   안전하지만 학생 질문에 답한 것이 아니다. 되묻기가 노리는 칸이 바로 여기다.
+#   ★ '문서미확인' 도 안 센다 — 맞는 문서인지 모르는 걸 정답으로 세면 그게 거짓말이다.
 CORRECT = (SURE, DEFER_OK)
+
+REVIEW_PATH = ROOT / "config" / "answer_review.yaml"
+
+
+def load_review() -> dict[str, dict]:
+    """검수 결과 — 문항별 O/X. 없으면 빈 dict (= 전부 미확인).
+
+    ★ 대표가 채우는 자리다. 시트에서 O/X 만 찍고 내보낸다 —
+      46번 문서를 찾아 URL 을 복사하는 것보다 훨씬 싸다.
+    """
+    try:
+        import yaml
+        doc = yaml.safe_load(REVIEW_PATH.read_text(encoding="utf-8")) or {}
+    except Exception:  # noqa: BLE001
+        return {}
+    out = {}
+    for row in (doc.get("answers") or []):
+        q = str(row.get("question") or "").strip()
+        if q:
+            out[q] = row
+    return out
+
+
+def apply_review(q: str, verdict: str, why: str,
+                 review: dict[str, dict]) -> tuple[str, str]:
+    """검수 결과를 판정에 씌운다.
+
+    ★ 답한 칸만 대상이다. '모름' 은 문서를 안 냈으니 확인할 문서가 없다.
+    """
+    if verdict not in (SURE, PAGE_Q, PAGE, THIN):
+        return verdict, why
+    row = review.get(q)
+    if not row or row.get("ok") is None:
+        return UNVERIFIED, f"{verdict} — 맞는 문서인지 확인 안 됨"
+    if row.get("ok") is False:
+        return WRONG, f"검수 X — {row.get('note') or '엉뚱한 문서'}"
+    return verdict, why
 
 
 def judge(q: str, expect: str, must: str, r) -> tuple[str, str]:
@@ -351,6 +400,7 @@ def main(argv: list[str] | None = None) -> int:
 
         rows, lat = [], []
         verdicts: collections.Counter = collections.Counter()
+        review = load_review()
         skipped_short = []
         for topic, q0, expect, must in QUESTIONS:
             q = q0
@@ -382,9 +432,23 @@ def main(argv: list[str] | None = None) -> int:
             ms = (time.perf_counter() - t0) * 1000
             lat.append(ms)
             v, why = judge(q, expect, must, r)
+            # ★ 사람이 문서를 확인했는지 씌운다 — 자를 고치는 게 아니라 칸을 쪼갠다
+            v, why = apply_review(q, v, why, review)
             verdicts[v] += 1
             top = getattr(r, "top", None) or (r.hits[0] if r.hits else None)
+            # ★ 의심 신호 — 판정에서는 뺀다. 표시로만 남긴다.
+            suspect = False
+            if v == UNVERIFIED and top is not None:
+                where = (f"{getattr(top, 'site_name', '')} "
+                         f"{getattr(top, 'page_title', '')} "
+                         f"{getattr(top, 'quote_path', '') or getattr(top, 'path', '')}")
+                import re as _re
+                toks = [t for t in _re.split(r"[^0-9A-Za-z가-힣+]+", q)
+                        if len(t) >= 2]
+                suspect = not any(t in where for t in toks)
             rows.append({
+                "suspect": suspect,
+                "page_title": getattr(top, "page_title", "") if top else "",
                 "topic": topic, "q": q, "q_full": q0, "expect": expect,
                 "verdict": v,
                 "why": why, "outcome": r.outcome.value,
@@ -408,7 +472,8 @@ def main(argv: list[str] | None = None) -> int:
                 rows[-1]["bottleneck_where"] = where
 
         icon = {SURE: "✅", DEFER_OK: "✅", PAGE_Q: "📃", PAGE: "📄",
-                THIN: "🫥", ATTR: "🔎", MISS: "△", WRONG: "❌"}
+                THIN: "🫥", ATTR: "🔎", MISS: "△", WRONG: "❌",
+                UNVERIFIED: "❓"}
         if not args.quiet:
             cur = None
             for r in rows:
@@ -433,12 +498,27 @@ def main(argv: list[str] | None = None) -> int:
         print(f"\n{'='*72}")
         print(f"균등 정확도 {ok}/{n} = {ok/n:.0%}")
         print(f"  ✅ 확신 {verdicts[SURE]} · ✅ 보류 {verdicts[DEFER_OK]}"
-              f"  │  📃 문서+발췌 {verdicts[PAGE_Q]} · 📄 문서만 {verdicts[PAGE]}"
+              f"  │  ❓ 문서미확인 {verdicts[UNVERIFIED]}"
+              f" · 📃 문서+발췌 {verdicts[PAGE_Q]} · 📄 문서만 {verdicts[PAGE]}"
               f" · 🫥 쓸모없음 {verdicts[THIN]}"
               f" · 🔎 형식안내 {verdicts[ATTR]}"
               f" · △ 모름 {verdicts[MISS]} · ❌ 틀림 {verdicts[WRONG]}")
         print("  ★ 문서까지·쓸모없음은 안전하지만 정답으로 세지 않는다 — "
               "학생 질문에 답한 게 아니다")
+        if verdicts[UNVERIFIED]:
+            print(f"  ★ 문서미확인 {verdicts[UNVERIFIED]}건 — 답은 했는데 "
+                  f"**맞는 문서인지 사람이 확인 안 했다.**")
+            print(f"     '성적 이의신청' 이 정보공개(행정) 문서로 통과하던 자리다.")
+            print(f"     python tools/review_sheet.py --out review.csv  → 시트에서 O/X")
+            sus = [r for r in rows if r.get("suspect")]
+            if sus:
+                # ★ 판정이 아니라 **볼 순서**다. 이 신호는 '성적 이의신청' 을 못 잡는다.
+                #   그래도 '증명서 발급 → 행동강령' 을 새로 찾아냈다.
+                print(f"     ❗ 먼저 볼 것 {len(sus)}건 — "
+                      f"질문 낱말이 문서 제목·경로에 하나도 없다")
+                for r in sus:
+                    print(f"        {r['q']:18} → {r.get('site','')} · "
+                          f"{r.get('page_title','')}")
         nc = sum(1 for r in rows if r.get("clarify"))
         if nc:
             print(f"  ★ 이 중 {nc}건은 되묻기가 발동한다 — "
