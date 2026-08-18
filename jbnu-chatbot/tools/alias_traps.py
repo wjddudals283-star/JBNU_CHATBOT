@@ -123,6 +123,72 @@ def main(argv: list[str] | None = None) -> int:
     # ★ 재는 방법: 별칭이 **자기 사이트 밖에서 얼마나 쓰이나**
     #   '취업' 은 취업진로지원과의 이름이면서 891건의 공지 제목에 든 말이다.
     #   그런 별칭은 좁히는 순간 질문을 잘못된 곳으로 보낸다.
+    # ═══════════════════════════════════════════════════════════
+    # 세 번째 종류 — **학사일정 주제 별칭**이 질문의 낱말을 먹는다
+    # ═══════════════════════════════════════════════════════════
+    # ★ 이 표면을 뒤늦게 넣었다 (2026-08-18)
+    #   검색 블록으로 온 시간 질문을 학사일정으로 넘기게 고쳤더니,
+    #   그 순간 이 별칭들이 **답을 가르는 자리**가 됐다.
+    #   테스트가 바로 잡았다 — '동아리 등록 기간' 이 등록금 납부로 갔다.
+    #   별칭 '등록' 이 2글자라 '동아리 등록' 을 먹은 것이다.
+    #   같은 병이 네 번째다. 표면이 늘 때마다 여기 한 칸씩 붙인다.
+    #
+    # ★ 재는 방법: **자기보다 긴 같은 주제 별칭이 안 붙은 비율**
+    #   '등록'(2글자)이 든 공지 중 '등록금'·'등록기간'이 없는 것은
+    #   '동아리 등록' 처럼 다른 주제일 가능성이 높다.
+    #
+    # ★ 첫 잣대가 틀렸다 — title_keywords 로 쟀다 (같은 날 고침)
+    #   등록금 주제의 title_keywords 가 ['등록'] 이라 **자기 자신을 뺐고**,
+    #   실제 덫인 '등록' 이 0.0% 로 나왔다. 방학은 keywords 가 ['휴가'] 라
+    #   덫이 아닌데 100% 로 나왔다. 자가 틀리면 진단이 틀린다.
+    #
+    # ★ 이건 **판정이 아니라 볼 순서다**
+    #   동의어('졸업식'→학위수여식)와 부분문자열('등록'⊂'동아리 등록')을
+    #   이 자로는 못 가른다. 위에 오는 것부터 사람이 보면 된다.
+    print("\n" + "═" * 74)
+    print("학사일정 주제 별칭이 질문의 낱말을 먹는가")
+    print("═" * 74)
+    try:
+        import yaml
+        topics = yaml.safe_load(
+            (ROOT / "config" / "calendar_topics.yaml").read_text(
+                encoding="utf-8"))["topics"]
+        c3 = repo.connect(pathlib.Path(args.db), readonly=True)
+        rows3 = []
+        for key, t in topics.items():
+            kws = t.get("title_keywords") or []
+            for alias in (t.get("utterance_aliases") or []):
+                if len(alias) < 2:
+                    continue
+                tot = c3.execute(
+                    "SELECT COUNT(*) FROM notice_item WHERE title LIKE ?",
+                    (f"%{alias}%",)).fetchone()[0]
+                if not tot:
+                    continue
+                longer = [a for a in (t.get("utterance_aliases") or [])
+                          if len(a) > len(alias) and alias in a]
+                if not longer:
+                    continue     # 자기가 그 주제의 가장 긴 말이면 검사 대상이 아니다
+                cond = " AND ".join(["title NOT LIKE ?"] * len(longer))
+                off = c3.execute(
+                    "SELECT COUNT(*) FROM notice_item WHERE title LIKE ? "
+                    f"AND {cond}",
+                    (f"%{alias}%", *[f"%{a}%" for a in longer])).fetchone()[0]
+                rows3.append((alias, key, tot, off))
+        c3.close()
+        rows3.sort(key=lambda r: -(r[3] / r[2] if r[2] else 0))
+        print(f"\n{'별칭':14} {'주제':12} {'그 말이 든 공지':>12} "
+              f"{'긴말 안붙음':>10}  비율")
+        print("─" * 74)
+        for alias, key, tot, off in rows3[:12]:
+            pct = off * 100 / tot if tot else 0
+            mark = "  ← 먼저 볼 것" if pct >= 50 else ""
+            print(f"{alias:14} {key:12} {tot:>12} {off:>10}  {pct:5.1f}%{mark}")
+        print("\n  ★ 짧은 별칭일수록 위험하다 — '등록'(2글자)이 '동아리 등록'을 먹었다.")
+        print("    긴 별칭이 이미 있으면(등록기간·등록금) 짧은 것은 빼는 게 낫다.")
+    except Exception as e:  # noqa: BLE001
+        print(f"  (건너뜀 — {type(e).__name__}: {e})")
+
     print("\n" + "═" * 74)
     print("사이트 별칭이 질문의 낱말을 먹는가")
     print("═" * 74)

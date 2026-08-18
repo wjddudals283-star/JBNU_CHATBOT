@@ -456,7 +456,10 @@ def _asks_council(utterance: str) -> bool:
 
 
 # 시간을 묻는 말. ★ 언어 표면이지 학교 관측이 아니다 — 조사·인사말과 같은 칸이다.
-_ASKS_WHEN = re.compile(r"언제|며칠|날짜|기간|마감")
+# ★ '일정' 을 뒤늦게 넣었다 (2026-08-18) — **우리가 만든 버튼 라벨**이
+#   시간 질문으로 안 잡히고 있었다. 메뉴 첫 칸이 '수강신청 일정' 인데
+#   이 목록에 '일정' 이 없어서 검색으로 갔다. 붙인 문구와 재는 자가 달랐다.
+_ASKS_WHEN = re.compile(r"언제|며칠|날짜|기간|마감|일정")
 
 
 def _asks_when(utterance: str) -> bool:
@@ -509,6 +512,27 @@ def route_of(payload: dict, block_name: str | None = None) -> tuple[str, str]:
     manual = manual_answers.find(utterance)
     if manual is not None:
         return "manual", manual.key
+
+    # ★ 검색 블록으로 왔어도 **날짜를 묻는 말은 학사일정이 답한다** (2026-08-18)
+    #   메뉴 첫 칸('수강신청 일정')이 답을 못 내던 이유가 여기였다.
+    #   카카오가 '수강신청 언제야' 를 info.search 로 분류하면 서버가 블록을
+    #   그대로 따랐고(why="path"), 학사일정을 아예 안 봤다. 그래서 학생이
+    #   "언제야" 를 물었는데 '학기당 수강신청학점 하한선' 을 고르라고 했다.
+    #
+    #   되묻기 과발동이 아니라 **라우팅 문제**다. 되묻기는 검색 안에서
+    #   갈릴 때 하는 일이고, 이건 애초에 검색으로 오면 안 되는 질문이었다.
+    #
+    #   근거는 자료 구조다 — **날짜는 page_section 에 없다.**
+    #   학사일정은 academic_calendar 에만 있으므로 검색은 이 질문을
+    #   원리적으로 못 답한다. 카카오는 '언제야' 를 안 보지만 우리는 본다.
+    #
+    #   범위: 검색 블록에서만, 시간 질문이면서 학사일정 주제일 때만.
+    #   학식·공지·안전 블록은 안 건드린다 (안전 분기는 이미 위에서 끝났다).
+    #   실측: 학사일정 주제 11개 중 10개가 이 문으로 새고 있었다 —
+    #   개강·종강·방학·중간고사·학위수여식이 전부 여기 들어 있었다.
+    if (handler == "info.search" and _asks_when(utterance)
+            and calendar_search.find_topic(utterance) is not None):
+        return "deadline.upcoming", "검색블록+시간질문+학사일정주제"
 
     if handler in ("welcome", "info.search", "notice.search",
                    "council.notice", "career.list", "council.event"):
