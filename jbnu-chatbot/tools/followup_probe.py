@@ -40,6 +40,12 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from tools.answerability_report import QUESTIONS       # noqa: E402
+from skill.section_search import site_names            # noqa: E402
+
+# ★ 학과 이름을 손으로 적지 않는다 — 우리가 아는 사이트 이름에서 끌어온다.
+#   손으로 고르면 우리가 고치고 싶은 쪽으로 고르게 된다.
+DEPTS = [n for n in site_names().values()
+         if n.endswith("학과") or n.endswith("학부")]
 from tools.live_probe import (BASE, HEADER, TOKEN_ENV,  # noqa: E402
                               flatten, payload)
 
@@ -137,7 +143,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"되묻기 → 학생의 대답 (2턴)  —  {where}")
     print("=" * 74)
 
-    rows = []
+    rows, rows3 = [], []
     for _t, q, _e, _m in QUESTIONS:
         try:
             body1, ch1, _s = flatten(ask(q))
@@ -185,9 +191,75 @@ def main(argv: list[str] | None = None) -> int:
                 verdict = "이어짐" if (got_pick and got_topic) else "끊김"
         rows.append((q, verdict, pick, kind, " ".join(body2.split())[:44]))
 
+        # ★ 3턴 — 대표가 실사용에서 찾은 자리 (2026-08-18)
+        #   "질병휴학에서 **표에 뜬 과 말고 내 과**를 쳤는데
+        #    질병휴학 내용이 아닌 졸업요건 내용이 뜸"
+        #   우리는 '버튼은 살고 형식 안내만 죽는다' 고 결론냈다.
+        #   그건 **2턴까지만 잰 것**이다. 버튼을 누른 뒤 학과를 치는
+        #   3턴에서 주제가 증발한다.
+        #
+        #   ★ **안 보여준 학과**를 친다. 보여준 것만 치면 실제 사고를 못 잰다.
+        #
+        #   ★ 처음엔 '2턴이 또 되묻기일 때만' 3턴을 갔다 — 틀렸다.
+        #     대표는 **답을 받고 나서** 그 답의 표에 자기 과가 없어서 쳤다.
+        #     조건을 걸면 대표가 실제로 한 일을 못 잰다. 조건을 뺀다.
+        offered = " ".join(_ch2 or [])
+        dept = next((d for d in DEPTS if d not in offered and d not in body2), None)
+        if dept is None:
+            continue
+        try:
+            body3, _ch3, _s3 = flatten(ask(dept))
+        except Exception as e:                       # noqa: BLE001
+            rows3.append((q, "오류", dept, str(e)[:40]))
+            continue
+        # ★ 판정을 **낱말이 아니라 구조**로 한다 (같은 날 두 번째로 고침)
+        #   처음엔 '1턴 질문의 낱말이 3턴 답에 있나' 로 쟀다.
+        #   그랬더니 '수강신청 학점 상한' 이 이어짐으로 나왔다 —
+        #   교과과정 표의 '학점-강의-실습' 에 '학점' 이 있었을 뿐이다.
+        #   13건이 **전부 같은 답**인데 하나만 이어짐으로 셌다.
+        #   오늘 정한 규칙에 그 규칙을 만든 자리에서 또 걸렸다:
+        #   「그 낱말이 들었나」가 아니라 「학생이 무엇으로 읽나」다.
+        #
+        #   맥락 없이 그 학과만 쳤을 때의 답과 **똑같으면**,
+        #   앞의 두 턴이 아무것도 나르지 않은 것이다. 낱말을 안 본다.
+        cold, _cc, _cs = flatten(ask(dept))
+        carried = " ".join(body3.split()) != " ".join(cold.split())
+        got_topic = carried
+        got_dept = dept in body3
+        if is_ask(body3):
+            v3 = "또_되물음"
+        elif is_lost(body3):
+            v3 = "끊김"
+        elif got_dept and got_topic:
+            v3 = "이어짐"
+        elif got_dept:
+            v3 = "주제증발"          # ← 대표가 본 것: 학과는 맞는데 딴 내용
+        else:
+            v3 = "끊김"
+        rows3.append((q, v3, dept, " ".join(body3.split())[:44]))
+
     if not rows:
         print("\n되묻기가 난 문항이 없다.")
         return 0
+
+    def _print3():
+        if not rows3:
+            print("\n3턴까지 간 문항이 없다.")
+            return
+        t3: dict[str, int] = {}
+        for _q, v, _d, _b in rows3:
+            t3[v] = t3.get(v, 0) + 1
+        print("\n" + "=" * 108)
+        print("3턴 — 버튼을 누른 뒤 **안 보여준 학과**를 쳤을 때")
+        print("=" * 108)
+        print(f"\n3턴까지 간 문항 {len(rows3)}건")
+        for k, n in sorted(t3.items(), key=lambda x: -x[1]):
+            mark = "  ★ 대표가 본 것" if k == "주제증발" else ""
+            print(f"   {k:10} {n:>3}건{mark}")
+        print(f"\n{'질문':20} {'판정':10} {'3턴에 친 학과':16} 3턴 답")
+        print("─" * 108)
+        for q, v, dept, body in rows3:
+            print(f"{q[:19]:20} {v:10} {dept[:15]:16} {body}")
 
     tally: dict[str, int] = {}
     for _q, v, _p, _k, _b in rows:
@@ -198,6 +270,7 @@ def main(argv: list[str] | None = None) -> int:
     print("─" * 108)
     for q, v, pick, kind, body in rows:
         print(f"{q[:19]:20} {v:10} {pick[:17]:18} {kind:14} {body}")
+    _print3()
 
     print("\n" + "─" * 40)
     for k in ("이어짐", "또_되물음", "끊김", "선택지없음", "오류"):
