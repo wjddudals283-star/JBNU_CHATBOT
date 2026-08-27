@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import functools
 import json
 import logging
 import os
@@ -462,6 +463,52 @@ def _asks_council(utterance: str) -> bool:
 _ASKS_WHEN = re.compile(r"언제|며칠|날짜|기간|마감|일정")
 
 
+@functools.lru_cache(maxsize=1)
+def _dept_names() -> tuple[str, ...]:
+    """학과·대학 이름 — 긴 것부터. sites.yaml 에서 끌어온다(손으로 안 적는다)."""
+    return tuple(sorted(
+        (n for n in section_search.site_names().values()
+         if n.endswith(("학과", "학부", "대학", "대학원"))),
+        key=len, reverse=True))
+
+
+def _positive_route(utterance: str) -> tuple[str, str] | None:
+    """발화 **자신이** 가리키는 갈래. 못 찾으면 None — 그때는 블록을 믿는다.
+
+    ★ 긍정만 본다. 부정 조건('음식 낱말이 없으면 학식이 아니다')은
+      '오늘 뭐 나와' 처럼 낱말이 없는 진짜 질문을 빼낸다.
+      없는 것을 근거로 옮기지 않고, **있는 것**을 근거로만 옮긴다.
+
+    ★ DB 를 안 본다. route_of 가 순수 판정이라는 계약을 지킨다 —
+      그 계약 덕분에 tools/answer_path 가 재는 쪽에서 부담 없이 부른다.
+    """
+    if manual_answers.find(utterance) is not None:
+        return "manual", "총학 확인 답"
+    # ★ 총학을 물었으면 **다른 별칭보다 먼저** 총학 자리로 간다.
+    #   폴백 분기가 원래 이 순서였는데 여기 옮겨 적을 때 빠뜨렸다 —
+    #   '총학 장학금 공지' 가 '장학금' 별칭에 먹혀 학교 안내로 갔다.
+    #   테스트 5개가 바로 잡았다. 순서도 규칙의 일부다.
+    if _asks_council(utterance):
+        return "council.notice", "총학+공지"
+    # ★ 시간 낱말이 붙으면 **별칭보다 구체적이다** (테스트가 잡았다)
+    #   '휴학' 은 안내 검색 별칭이고 '휴학' 은 학사일정 주제이기도 하다.
+    #   '휴학 신청' 은 절차라 검색이 맞고, '휴학 언제까지야' 는 날짜라 일정이 맞다.
+    #   가르는 건 별칭이 아니라 **시간을 물었나** 다.
+    #   처음엔 별칭을 먼저 봤고, '휴학 언제까지야' 가 검색으로 가 답을 잃었다.
+    if _asks_when(utterance) and calendar_search.find_topic(utterance) is not None:
+        return "deadline.upcoming", "시간질문+학사일정주제"
+    g, why = routing.by_utterance(utterance)
+    if g:
+        return g, f"발화별칭:{why}"
+    if central.find(utterance) is not None:
+        return "info.search", "중앙 주제"
+    d = next((x for x in _dept_names() if x in (utterance or "")), None)
+    if d:
+        # 학과 이름이 든 말은 그 학과 안내다. 학식·일정 블록이 삼킬 자리가 아니다.
+        return "info.search", f"학과이름:{d}"
+    return None
+
+
 def _asks_when(utterance: str) -> bool:
     """'언제' 를 버리고 있었다 (2026-08-14 배포본 실측).
 
@@ -505,6 +552,28 @@ def route_of(payload: dict, block_name: str | None = None) -> tuple[str, str]:
         return "welcome", "빈 발화 또는 웰컴 블록"
 
     handler, via = routing.resolve(payload, path_block=block_name)
+
+    # ★ 블록이 와도 **발화를 본다** (2026-08-18)
+    #   같은 병이 세 번째다. 한 번은 사고, 두 번은 부류, 세 번은 구조다.
+    #       아침   검색 블록이 학사일정 질문을 삼켰다  → 검색 블록만 고쳤다
+    #       지금   학식 블록이 46문항 중 43건을 삼킨다
+    #              학사일정 블록도 43건
+    #   문제는 학식 블록이 아니라 **'블록이 오면 발화를 아예 안 본다'** 는 것이다.
+    #   학식만 고치면 다음엔 학사일정에서 난다. 그래서 갈래를 안 가리고 건다.
+    #
+    #   ★ 부정 조건을 쓰지 않는다
+    #     '음식 낱말이 하나도 없으면 학식이 아니다' 는 **'오늘 뭐 나와'** 를
+    #     학식에서 빼낸다 — 진짜 학식 질문인데 낱말이 없다.
+    #     있는 신호만 본다: 발화가 **다른 갈래를 긍정으로 가리킬 때만** 옮긴다.
+    #
+    #   실측(46문항): 학식 블록에서 17건 구제 · 학사일정 블록에서 14건 구제,
+    #   진짜 학식/학사일정 발화 30개 중 **새어 나가는 것 0개**.
+    #   남는 26건은 별칭 목록이 얇아서다 — 구조가 아니라 사전 문제이고
+    #   별칭을 넓히면 같은 규칙으로 저절로 구제된다.
+    own = _positive_route(utterance)
+    if own is not None and own[0] != handler:
+        return own[0], f"블록({handler})보다 발화 — {own[1]}"
+
     if handler in ("food.menu.today", "deadline.upcoming"):
         return handler, via
 
@@ -530,10 +599,6 @@ def route_of(payload: dict, block_name: str | None = None) -> tuple[str, str]:
     #   학식·공지·안전 블록은 안 건드린다 (안전 분기는 이미 위에서 끝났다).
     #   실측: 학사일정 주제 11개 중 10개가 이 문으로 새고 있었다 —
     #   개강·종강·방학·중간고사·학위수여식이 전부 여기 들어 있었다.
-    if (handler == "info.search" and _asks_when(utterance)
-            and calendar_search.find_topic(utterance) is not None):
-        return "deadline.upcoming", "검색블록+시간질문+학사일정주제"
-
     if handler in ("welcome", "info.search", "notice.search",
                    "council.notice", "career.list", "council.event"):
         return handler, via
