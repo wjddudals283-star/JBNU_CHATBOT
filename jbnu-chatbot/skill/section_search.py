@@ -670,7 +670,15 @@ def _attempt(conn, utterance: str, tokens: list[str], *, repo,
         #   스스로를 '생활관' 이라 부르므로 '기숙사' 를 계속 요구하면 영영 못 찾는다.
         used = {a for a, h in site_aliases().items() if h == site_host}
         used |= {site_label}
-        narrowed = [t for t in tokens if not any(u and u in t for u in used)]
+        # ★ 양쪽으로 본다 (2026-08-28)
+        #   조사 떼기가 '항공우주공학과' 를 '항공우주공학' 으로 만든다('과' 가 조사다).
+        #   그러면 `u in t` 는 '항공우주공학과' in '항공우주공학' → False 라
+        #   **지워야 할 학과 낱말이 안 지워졌다.** 방향이 반대였다.
+        #   남은 학과 낱말이 후보를 다 채워서 '휴학 항공우주공학과' 가
+        #   matched=['항공우주공학'] 로 학습성과를 냈다.
+        #   실측: 46문항 영향 0건 · 실제 발화 101종 중 4종 · 학과 78개 중 66개가 대상.
+        narrowed = [t for t in tokens
+                    if not any(u and (u in t or t in u) for u in used)]
         if narrowed:          # 다 지워지면 원래 질의를 그대로 쓴다
             tokens = narrowed
     df = {t: repo.token_doc_freq(conn, t) for t in tokens}
