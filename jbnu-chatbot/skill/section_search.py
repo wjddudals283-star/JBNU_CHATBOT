@@ -638,6 +638,21 @@ def search(conn, utterance: str, *, repo,
     return second
 
 
+@functools.lru_cache(maxsize=1)
+def _dept_names() -> tuple[str, ...]:
+    """학과·대학 이름 — 긴 것부터. sites.yaml 에서 끌어온다."""
+    return tuple(sorted(
+        (n for n in site_names().values()
+         if n.endswith(("학과", "학부", "대학", "대학원"))),
+        key=len, reverse=True))
+
+
+def _dept_in(utterance: str) -> str | None:
+    """질문에 든 학과 이름. 가장 긴 것 하나."""
+    u = utterance or ""
+    return next((d for d in _dept_names() if d in u), None)
+
+
 def _attempt(conn, utterance: str, tokens: list[str], *, repo,
              expand: dict[str, frozenset[str]],
              force_all_sites: bool = False) -> SearchResult:
@@ -712,6 +727,26 @@ def _attempt(conn, utterance: str, tokens: list[str], *, repo,
               if h.score >= top.score * AMBIGUOUS_RATIO]
     result.hits = hits[:MAX_CANDIDATES]
     result.missing_tokens = [t for t in required if t not in top.matched]
+
+    # ★ 학과 이름은 **어디를 볼지**지 **무엇을 볼지**가 아니다 (2026-08-18)
+    #   '휴학 항공우주공학과' 가 matched=['항공우주공학'] 로 학습성과를 냈다.
+    #   상위 5개가 전부 학과 이름만 맞고 동점이었다 — 주제어 '휴학' 은 0건.
+    #   범위를 맞춘 것을 답을 맞춘 것으로 세면 안 된다.
+    #
+    #   ★ 임계값이 아니라 뜻이다. 맞은 낱말이 질문 속 학과 이름의 조각뿐이면
+    #     우리는 '어느 학과인지' 만 알아냈고 '무엇을 묻는지' 는 모르는 것이다.
+    #
+    #   실측(그 학과에 그 문서가 실제로 있는 43쌍):
+    #     확신 있게 딴 문서를 내던 10건을 **10건 다** 잡는다.
+    #     맞는 답인데 잘못 잡는 것 0건 · 46문항 영향 0건.
+    #   FOUND 에서 되묻기로 내려오는 건 나빠지는 게 아니라 정직해지는 것이다 —
+    #   '증명서 발급' 이 확신 오답에서 되묻기로 내려온 것과 같은 자리다.
+    dept = _dept_in(utterance)
+    if dept and top.matched and all(t in dept for t in top.matched):
+        result.outcome = Outcome.AMBIGUOUS
+        result.defer_reason = (f"'{dept}' 만 맞고 주제어는 하나도 못 맞춤 "
+                               f"— 어디를 볼지만 알아냈다")
+        return result
 
     # ★ 긍정 단정에는 높은 근거를 요구한다.
     #   질문의 낱말 하나가 어디에도 안 맞았는데 확신하면 엉뚱한 문서를 답으로 준다.
