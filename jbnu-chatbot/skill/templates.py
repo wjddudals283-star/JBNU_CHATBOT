@@ -26,6 +26,17 @@ MEAL_KO = {"breakfast": "아침", "lunch": "점심", "dinner": "저녁"}
 
 # 학사일정을 넓혀 볼 수 있는 최대 폭. 버튼 문구와 서버의 상한이 **같은 수**여야
 # 한다 — 다르면 버튼이 못 지킬 약속을 하게 된다.
+# ★ 블록이 삼킨 자리의 **출구** (2026-08-18)
+#   카카오가 '오늘 날씨' 를 학식 블록으로 분류하면 우리는 못 가른다 —
+#   '오늘 뭐 나와' 와 토큰이 ['오늘', X] 로 같아서 어휘로는 안 갈린다.
+#   그런데 그때 학식 화면만 내면 **엉뚱한 답을 확신 있게 준 것**처럼 보인다.
+#   우리 순서에서 제일 나쁜 자리다.
+#
+#   ★ 라우팅과 달리 여기서는 **부정 조건을 써도 된다**
+#     라우팅에서 '음식 낱말이 없으면 학식이 아니다' 는 진짜 질문을 빼낸다.
+#     여기서는 틀려도 손해가 **문장 한 줄**이지 답이 바뀌지 않는다.
+#     실측: 갇힌 26건 전부가 이 줄을 받고, 진짜 학식 발화 22개 중 3개만 받는다.
+OFF_TOPIC_EXIT = "혹시 다른 걸 물으셨다면 그 말을 다시 입력해 주세요."
 MAX_UPCOMING_DAYS = 90
 # '이번 달' 이 며칠인가. ★ 버튼 문구와 서버가 **같은 수**를 봐야 한다 —
 #   서버가 31 로 못 받으면 우리가 붙인 '이번 달 전체' 버튼이 거짓말을 한다.
@@ -347,7 +358,8 @@ def _render_c2(answer: MealAnswer, *, facility_name: str, dl: str, meal_ko: str,
 
 # ── 폴백 ────────────────────────────────────────────────────────
 
-def render_meal_ask(names: list[str], *, date: str) -> dict:
+def render_meal_ask(names: list[str], *, date: str,
+                    off_topic: bool = False) -> dict:
     """어느 식당인지 되묻는다.
 
     ★ 시각으로 끼니를 고르지 않는 것과 같은 이유다
@@ -358,6 +370,8 @@ def render_meal_ask(names: list[str], *, date: str) -> dict:
     """
     text = (f"{date_label(date)} 학식이에요.\n"
             "어느 식당을 볼까요?")
+    if off_topic:
+        text += "\n\n" + OFF_TOPIC_EXIT
     return kakao.response(
         [kakao.simple_text(text)],
         [kakao.quick_reply(n, f"{n} 학식") for n in names[:kakao.MAX_QUICK_REPLIES]])
@@ -464,7 +478,8 @@ def render_overview(rows, *, date: str, meal_type: str) -> dict:
 
 
 def render_upcoming(rows, *, today: str, days: int, source_url: str,
-                    observed_at: str | None = None, stale: bool = False) -> dict:
+                    observed_at: str | None = None, stale: bool = False,
+                    off_topic: bool = False) -> dict:
     """다가오는 학사일정 (deadline.upcoming).
 
     ★ 진행 중인 기간도 보여준다. 9/3에 물으면 9/1~9/7 수강신청 변경 기간은
@@ -513,8 +528,12 @@ def render_upcoming(rows, *, today: str, days: int, source_url: str,
         overflow_button=overflow)
 
     outputs = [card]
-    if observed_at:
-        outputs.append(kakao.simple_text(f"{observed_label(observed_at)} 기준"))
+    tail = [f"{observed_label(observed_at)} 기준"] if observed_at else []
+    if off_topic:
+        # 블록이 데려왔는데 발화에 학사일정 신호가 하나도 없다 — 출구를 준다.
+        tail.append(OFF_TOPIC_EXIT)
+    if tail:
+        outputs.append(kakao.simple_text("\n".join(tail)))
     # ★ 같은 고장을 **빈 목록 분기에서만** 고쳤었다 (2026-08-18)
     #   30줄 위에 '이미 최대로 넓혀 놓고 또 넓히자고 하지 않는다' 가 있는데,
     #   목록이 있는 쪽에는 안 붙었다. 그래서 '이번 달 학사일정'(31일)을 보는

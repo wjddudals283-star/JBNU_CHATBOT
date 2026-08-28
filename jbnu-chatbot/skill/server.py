@@ -472,6 +472,47 @@ def _dept_names() -> tuple[str, ...]:
         key=len, reverse=True))
 
 
+@functools.lru_cache(maxsize=1)
+def _block_vocab() -> dict[str, tuple[str, ...]]:
+    """블록마다 '이 발화가 정말 그 주제다' 를 말해 주는 낱말. config 에서 끌어온다."""
+    doc = routing.load()
+    out: dict[str, tuple[str, ...]] = {}
+    for h, names in (doc.get("handlers") or {}).items():
+        vocab = {routing._norm(n) for n in (names or []) if n and "." not in n}
+        out[h] = tuple(sorted(vocab, key=len, reverse=True))
+    # 식당·끼니 별칭도 학식의 신호다 (aliases.yaml)
+    try:
+        extra = set()
+        for grp in (aliases.load() or {}).values():
+            for spec in (grp or {}).values():
+                extra.add(routing._norm(spec.get("canonical") or ""))
+                extra |= {routing._norm(a) for a in (spec.get("aliases") or [])}
+        out["food.menu.today"] = tuple(sorted(
+            set(out.get("food.menu.today", ())) | {e for e in extra if e},
+            key=len, reverse=True))
+    except Exception:  # noqa: BLE001
+        pass
+    return out
+
+
+def _off_topic_for(handler: str, utterance: str) -> bool:
+    """블록이 데려왔는데 발화에 그 주제의 신호가 **하나도 없다**.
+
+    ★ 라우팅에서는 이런 부정 조건을 쓰지 않는다 — '오늘 뭐 나와' 를 빼낸다.
+      여기서는 답을 바꾸지 않고 **출구 한 줄**만 붙이므로 틀려도 손해가 작다.
+      학식 화면만 내면 '엉뚱한 답을 확신 있게 준 것' 처럼 보이는 게 더 나쁘다.
+    """
+    n = routing._norm(utterance)
+    if not n:
+        return False
+    vocab = _block_vocab().get(handler, ())
+    if any(v in n for v in vocab):
+        return False
+    if handler == "deadline.upcoming":
+        return calendar_search.find_topic(utterance) is None
+    return True
+
+
 def _positive_route(utterance: str) -> tuple[str, str] | None:
     """발화 **자신이** 가리키는 갈래. 못 찾으면 None — 그때는 블록을 믿는다.
 
@@ -1030,7 +1071,8 @@ def _handle_upcoming(db_path: pathlib.Path, params: dict, detail: dict,
         log.info("[skill] upcoming days=%s rows=%s stale=%s", days, len(rows), stale)
         return templates.render_upcoming(
             rows, today=today, days=days, source_url=SCHEDULE_URL,
-            observed_at=observed, stale=stale)
+            observed_at=observed, stale=stale,
+            off_topic=_off_topic_for("deadline.upcoming", utterance))
     finally:
         conn.close()
 
@@ -1110,7 +1152,8 @@ def _handle_meal(db_path: pathlib.Path, params: dict, detail: dict,
         if not specified:
             return templates.render_meal_ask(
                 [aliases.canonical_name(f) for f in aliases.all_facility_ids()],
-                date=date)
+                date=date,
+                off_topic=_off_topic_for("food.menu.today", utterance))
         # 끼니는 밝혔다 — 그 끼니로 전체 식당을 보여준다
         return _handle_overview(db_path, date=date, meal_type=meal_type, now=now)
 
