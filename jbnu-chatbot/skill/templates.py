@@ -1040,6 +1040,21 @@ def render_section(result, *, utterance: str = "") -> dict:
         sites = {getattr(h, "site_name", "") or h.page_title
                  for h in result.hits}
         one_site = len(sites) == 1
+        # ★ 화면의 제목은 **서로 달라야 한다** (2026-08-28)
+        #   '증명서 발급' 이 이렇게 나갔다:
+        #       전북대학교 본부 · 전북대학교 본부 · 스마트팜학과 · …
+        #   기술적으로는 중복이 아니다 — (사이트, 문서제목) 쌍은 다르다.
+        #   그런데 화면은 **사이트 이름만 크게** 보여서 같은 줄로 읽힌다.
+        #   '가능' 은 5줄 중 4줄이 '전북대학교 본부' 였다 — 고를 게 없어 보인다.
+        #   실측: 116개 발화 중 11건이 이 모양이었다.
+        #
+        #   같은 사이트가 두 번 이상 나오는 줄만 **문서 제목을 앞으로** 낸다.
+        #   버리지 않는다 — 학생이 고를 것이 실제로 여럿이기 때문이다.
+        repeated = {s for s in
+                    [getattr(h, "site_name", "") or h.page_title
+                     for h in result.hits]
+                    if [getattr(x, "site_name", "") or x.page_title
+                        for x in result.hits].count(s) > 1}
         items = []
         seen: set[tuple[str, str]] = set()
         for h in result.hits:
@@ -1047,7 +1062,8 @@ def render_section(result, *, utterance: str = "") -> dict:
                 break
             site = getattr(h, "site_name", "") or h.page_title
             doc = h.page_title or (h.quote_path or h.path).split(" > ")[-1]
-            title, desc = (doc, site) if one_site else (site, doc)
+            title, desc = ((doc, site) if (one_site or site in repeated)
+                           else (site, doc))
             # ★ 완전히 같은 줄은 한 번만. clarify.options 에 이미 있던 규칙인데
             #   여기엔 없었다 — '근로장학생' 은 같은 공지 제목이 세 번 나왔다.
             #   원칙이 한 군데만 있으면 다른 데서 조용히 어긋난다.
