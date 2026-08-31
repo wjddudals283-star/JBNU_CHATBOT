@@ -31,10 +31,21 @@
 #   등급을 기록해 두면 나중에 누가 봐도 어느 수준의 확인인지 알 수 있고,
 #   나중에 등급만 올리면 된다.
 #
-# ⚠️ 다음 할 일 — 전북대 두 곳은 **개강 전에 전화로 확인**해서
-#    verified_method 를 phone 으로 올릴 것. 교내 부서는 개편이 잦다.
-#      · 전북대 행복드림센터  063-219-5301
+# ✅ 전북대 두 곳은 **전화로 확인했다** (2026-08-31, 총학생회장이 직접 걺).
+#    번호·위치 모두 맞았다. verified_method: phone — 최고 등급이다.
+#      · 전북대 행복드림센터  063-219-5301 (진수당 1층)
 #      · 전북대 인권센터      063-270-3025
+#
+# ★ 왜 이 두 줄만 최고 등급인가 — **틀릴 때의 값이 다르다**
+#   다른 답은 틀리면 학생이 헛걸음한다. 이건 틀리면
+#   **위급한 학생이 안 받는 전화를 건다.**
+#   틀릴 때의 값이 다르면 신뢰 등급도 달라야 한다.
+#   그래서 크롤이 나중에 다른 번호를 물어와도 이 값이 이긴다 —
+#   이 파일은 자동 갱신 대상이 아니다(맨 위 규칙).
+#
+# ★ recheck_at: 2027-02 (학기 바뀔 때)
+#   센터는 이전·번호 변경이 잦다. 우리 서비스는 11/30 에 끝나지만
+#   **이 값은 그 뒤에도 남는다.** 남는 값에는 만료를 적어 둔다.
 #
 #    국가인권위원회(1331)는 공식 사이트에서 확인되지 않아 **목록에서 뺐다.**
 #    확인되면 harassment 에 다시 넣는다. 확인 안 된 번호를 남겨두면
@@ -74,9 +85,10 @@ categories:
         phone: "063-219-5301"
         note: "진수당 1층"
         verified: true
-        verified_at: "2026-08-10"
+        verified_at: "2026-08-31"
         verified_by: "총학생회"
-        verified_method: official_site
+        verified_method: phone
+        recheck_at: "2027-02"
 
   violence:
     keywords: [성폭력, 성추행, 성희롱, 강제추행, 데이트폭력, 스토킹, 폭행, 협박, 몰카, 불법촬영]
@@ -94,9 +106,10 @@ categories:
         phone: "063-270-3025"
         note: "진수당 154호"
         verified: true
-        verified_at: "2026-08-10"
+        verified_at: "2026-08-31"
         verified_by: "총학생회"
-        verified_method: official_site
+        verified_method: phone
+        recheck_at: "2027-02"
 
   harassment:
     keywords: [괴롭힘, 괴롭혀, 따돌림, 왕따, 갑질, 인권침해, 차별당, 폭언]
@@ -108,9 +121,10 @@ categories:
         phone: "063-270-3025"
         note: "진수당 154호"
         verified: true
-        verified_at: "2026-08-10"
+        verified_at: "2026-08-31"
         verified_by: "총학생회"
-        verified_method: official_site
+        verified_method: phone
+        recheck_at: "2027-02"
 
   mental_health:
     # ★ '심리상담' 이 여기 없어서 검색을 타고 있었다 (2026-08-14 배포본 실측)
@@ -133,6 +147,7 @@ categories:
         phone: "063-219-5301"
         note: "진수당 1층"
         verified: true
-        verified_at: "2026-08-10"
+        verified_at: "2026-08-31"
         verified_by: "총학생회"
-        verified_method: official_site
+        verified_method: phone
+        recheck_at: "2027-02"

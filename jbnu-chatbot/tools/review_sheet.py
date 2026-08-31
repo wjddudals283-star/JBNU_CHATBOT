@@ -45,6 +45,22 @@ HEADER = ["질문", "봇이 낸 문서", "URL", "인용 앞부분", "의심",
           "검수 OX", "올바른 문서(X일 때만)", "메모"]
 
 
+def _head() -> str:
+    """지금 HEAD 의 짧은 해시. git 이 없으면 빈 값 — 파일은 그래도 만든다."""
+    import subprocess
+    try:
+        return subprocess.run(["git", "rev-parse", "--short", "HEAD"],
+                              cwd=ROOT, capture_output=True, text=True,
+                              timeout=10).stdout.strip() or "(unknown)"
+    except Exception:  # noqa: BLE001
+        return "(unknown)"
+
+
+def _now() -> str:
+    import datetime as dt
+    return dt.datetime.now().strftime("%Y-%m-%d %H:%M")
+
+
 def suspicious(q: str, where: str) -> str:
     """질문 낱말이 문서 제목·경로에 하나도 없으면 ❗.
 
@@ -100,6 +116,14 @@ def main(argv: list[str] | None = None) -> int:
             url = getattr(top, "page_url", "") or ""
         prev = review.get(q) or {}
         ox = "O" if prev.get("ok") is True else ("X" if prev.get("ok") is False else "")
+        # ★ 안전 분기는 **이미 확인됐다** — 대표가 8/31 전화로 직접 걸었다.
+        #   크롤이 아니라 사람이 확인한 값이라 다시 검수할 것이 없다.
+        #   비워 두면 대표가 이미 한 일을 또 하게 된다.
+        if obs.route == "safety":
+            ox = "O"
+            memo_extra = "대표가 8/31 전화로 확인 (크롤 아님) · verified_method: phone"
+        else:
+            memo_extra = ""
         sus = suspicious(q, where)
         # ★ 메모를 미리 채운다 — 대표가 O/X 찍을 때 헷갈리지 않게.
         #   공지 검색은 **제목만** 보는 자리라 문서 제목이 비어서 ❗ 가 붙는다.
@@ -108,6 +132,8 @@ def main(argv: list[str] | None = None) -> int:
         memo = prev.get("note") or ""
         # ★ 어느 갈래로 갔는지 시트에 남긴다 — 대표가 "이건 검색이 아니네" 를 볼 수 있다.
         memo = (memo + " " if memo else "") + f"[{obs.route}]"
+        if memo_extra:
+            memo = f"{memo} {memo_extra}"
         if obs.kind == "notices":
             # ★ 공지는 **제목만** 보는 자리다. 본문을 안 읽으니
             #   '문서 제목이 질문과 맞나' 로 판단하시면 됩니다.
@@ -118,8 +144,17 @@ def main(argv: list[str] | None = None) -> int:
 
     out = pathlib.Path(args.out)
     # ★ BOM 을 붙인다 — 구글시트·엑셀이 UTF-8 을 알아보게. 안 그러면 한글이 깨진다.
+    # ★ 맨 윗줄에 **무엇을 잰 것인지** 적는다 (2026-08-31)
+    #   아침에 정한 규칙의 실행이다 — '대표가 본 화면이 최신 배포본이 아닐 수 있다'.
+    #   오늘 코드가 여러 번 바뀌었는데 CSV 가 안 따라와서
+    #   낡은 자료 위에 O 를 찍을 뻔했다. 하루 종일 잡은 그 병이다.
+    #   해시와 시각이 없으면 이 파일이 무엇을 잰 것인지 나중에 알 수 없다.
+    stamp = [f"# 커밋 {_head()} · 뽑은 시각 {_now()} · DB {args.db}",
+             "# 이 줄 아래가 그 시점의 답이다. 코드가 바뀌면 다시 뽑고 O/X 를 옮긴다."]
     with out.open("w", encoding="utf-8-sig", newline="") as f:
         w = csv.writer(f)
+        for line in stamp:
+            w.writerow([line])
         w.writerow(HEADER)
         w.writerows(rows)
 

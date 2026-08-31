@@ -308,7 +308,16 @@ def test_확인_워크시트가_등급까지_보여준다():
     """나중에 누가 봐도 어느 수준의 확인인지 알 수 있어야 한다."""
     rows = safety.load().verification_worksheet()
     assert rows and all(r["verified"] for r in rows)
-    assert {r["verified_method"] for r in rows} == {"official_site"}
+    assert {r["verified_method"] for r in rows} <= {"official_site", "phone"}
+
+    # ★ 전북대 두 곳은 **전화로 확인**했다 (2026-08-31, 총학생회장이 직접 걺).
+    #   이 봇에서 유일하게 사람 목숨에 닿는 문장이다 —
+    #   다른 답은 틀리면 학생이 헛걸음하지만 이건 위급한 학생이
+    #   **안 받는 전화**를 건다. 틀릴 때의 값이 다르면 등급도 달라야 한다.
+    #   등급이 되돌아가면 여기서 잡는다.
+    for name in ("전북대 행복드림센터", "전북대 인권센터"):
+        r = next(x for x in rows if x["label"] == name)
+        assert r["verified_method"] == "phone", name
     # 같은 기관이 여러 범주에 걸쳐도 한 줄로 모은다
     center = next(r for r in rows if r["label"] == "전북대 인권센터")
     assert set(center["categories"]) == {"violence", "harassment"}
