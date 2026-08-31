@@ -145,6 +145,11 @@ TABLE_OFFTOPIC_PENALTY = 0.35
 #   왜 맞는지 모르는 상수는 언제 틀릴지도 모른다. 유무로 바꾼다.
 DEPT_SPECIFIC_SITES = 4
 # 문서의 주제가 드러나는 자리 — 제목과 첫머리
+# ★ 지난 것을 모아 둔 문서임을 **원문이 제목에 쓴** 말. 언어 표면이다.
+#   질문에 이 말이 없으면 학생은 지금을 물은 것이다.
+#   '연혁' 은 넣지 않는다 — 연혁을 물으면 연혁 페이지가 정답이다
+#   (오늘 낱말로 세다 틀린 다섯 번 중 하나가 그것이었다).
+PAST_MARKERS = ("역대", "명예", "퇴임", "퇴직")
 TOPIC_ZONE_CHARS = 140
 # 핵심 낱말의 이 비율 이상 무게를 가진 낱말은 함께 필수로 본다
 CORE_MARGIN = 0.7
@@ -734,7 +739,42 @@ def _attempt(conn, utterance: str, tokens: list[str], *, repo,
     rivals = [h for h in hits[1:MAX_CANDIDATES]
               if h.score >= top.score * AMBIGUOUS_RATIO]
     result.hits = hits[:MAX_CANDIDATES]
-    result.missing_tokens = [t for t in required if t not in top.matched]
+    # ★ 핵심 낱말이 문서 **어디에도** 없으면 그 문서는 답이 아니다 (2026-08-30)
+    #   '성적 이의신청' 이 **정보공개(행정) 이의신청** 문서를 확신으로 냈다.
+    #   '이의신청' 은 맞았고 '성적' 은 그 문서에 한 글자도 없다.
+    #   required(CORE_MARGIN)가 '성적' 을 빼고 있어서 안 걸렸다.
+    #
+    #   ★ 군더더기 낱말은 뺀다 — 이미 있는 축(WEAK_TOKEN_DF)을 그대로 쓴다
+    #     '자퇴 절차' 는 맞는 답인데 문서가 '절차' 라는 말을 안 쓰고 절차를 적는다.
+    #     '공지'(5.1%)·'교육과정'(7.6%)도 흔해서 변별력이 없다.
+    #     이걸 안 빼면 맞는 답 3건이 같이 죽는다 — 재보고 확인했다.
+    #
+    #   ★ 제목·첫머리가 아니라 **본문 전체**를 본다 (matched 가 그 뜻이다)
+    #     제목만 보면 8건이 걸리는데 그중 3건이 맞는 답이었다.
+    #     "그 문서가 그 주제인가" 와 "그 낱말이 있기는 한가" 는 다른 질문이다.
+    #   실측 사정거리: 116개 발화 중 **3건**. 셋 다 틀린 답이었다.
+    _weak = {t for t in tokens if df.get(t, 0) > total * WEAK_TOKEN_DF}
+    _strong = [t for t in tokens if t not in _weak]
+    # ★ 1등에 없으면 **다음 후보를 본다** — 없다고 말하기 전에 (2026-08-30)
+    #   '일반선택 학점의 취득(이수)' 는 우리가 만든 버튼인데 눌러도 답이 없었다.
+    #   1등(편입학학점인정)에만 '취득' 이 없고 2~4등에는 있었다.
+    #   1등만 보고 "'취득' 관련 안내는 못 찾았어요" 라고 말하면 **거짓말**이다.
+    #   우리가 준 선택지인데 답이 없으면 고장이다 — 그 규칙에 걸렸다.
+    #   실측 사정거리: 139개 발화(46문항 + 실제 101 + 버튼) 중 **1건**.
+    if _strong and not all(t in (top.matched or []) for t in _strong):
+        better = next((h for h in result.hits[1:]
+                       if all(t in (h.matched or []) for t in _strong)), None)
+        if better is not None:
+            # ★ result.top 은 hits[0] 을 돌려주는 property 다 — 대입하면 터진다.
+            #   855 통과인데 button_probe 에서 AttributeError 가 났다.
+            #   목록을 다시 세워야 top 이 따라온다.
+            result.hits = [better] + [h for h in result.hits if h is not better]
+            top = better
+    _absent = [t for t in tokens
+               if t not in _weak and t not in (top.matched or [])]
+    result.missing_tokens = sorted(
+        set([t for t in required if t not in top.matched]) | set(_absent),
+        key=tokens.index)
 
     # ★ 학과 이름은 **어디를 볼지**지 **무엇을 볼지**가 아니다 (2026-08-18)
     #   '휴학 항공우주공학과' 가 matched=['항공우주공학'] 로 학습성과를 냈다.
@@ -749,6 +789,31 @@ def _attempt(conn, utterance: str, tokens: list[str], *, repo,
     #     맞는 답인데 잘못 잡는 것 0건 · 46문항 영향 0건.
     #   FOUND 에서 되묻기로 내려오는 건 나빠지는 게 아니라 정직해지는 것이다 —
     #   '증명서 발급' 이 확신 오답에서 되묻기로 내려온 것과 같은 자리다.
+    # ★ 「원문은 참인데 답이 거짓」 (2026-08-30) — 새 갈래다
+    #   '총장 누구야' 에 **역대총장**(제1대 김두헌, 1952년)을 냈다.
+    #   그 페이지는 한 줄도 안 틀렸다 — 인용 정확, 출처 정확, must('총장') 있음.
+    #   그런데 '지금 총장이 누구냐' 의 답은 아니다.
+    #
+    #   우리 안전장치는 전부 **'제대로 옮겼나'** 를 본다.
+    #   이건 **'그 인용이 물은 것에 답하나'** 다. 지금까지의 확신 오답은
+    #   틀린 문서였는데, 이건 **맞는 문서인데 틀린 답**이다.
+    #
+    #   ★ 지난 것을 모아 둔 문서는 **그 말을 물었을 때만** 답이다.
+    #     '역대·명예·퇴임·퇴직' 은 언어 표면이다 — 학교 관측이 아니라
+    #     '이 문서가 무엇을 모아 둔 것인가' 를 원문이 제목에 쓴 것이다.
+    #     질문에 그 말이 없으면 학생은 **지금**을 물은 것이다.
+    #
+    #   ★ 현직을 문서로 확인 못 하면 역대 목록을 내지 않고 모른다고 한다.
+    #     정확한 정보만 전달한다는 원칙이 여기서는 '덜 내는 쪽' 이다.
+    #   실측 사정거리: 116개 발화 중 **2건**(총장 누구야 · 총장이 누구야).
+    past = next((w for w in PAST_MARKERS
+                 if w in (top.page_title or "") and w not in utterance), None)
+    if past:
+        result.outcome = Outcome.AMBIGUOUS
+        result.defer_reason = (f"'{past}' 은 지난 것을 모아 둔 문서인데 "
+                               f"질문에 그 말이 없다 — 지금을 물었다")
+        return result
+
     dept = _dept_in(utterance)
     if dept and top.matched and all(t in dept for t in top.matched):
         result.outcome = Outcome.AMBIGUOUS

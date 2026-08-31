@@ -321,7 +321,7 @@ def load_review() -> dict[str, dict]:
 
 
 def apply_review(q: str, verdict: str, why: str,
-                 review: dict[str, dict]) -> tuple[str, str]:
+                 review: dict[str, dict], top=None) -> tuple[str, str]:
     """검수 결과를 판정에 씌운다.
 
     ★ 답한 칸만 대상이다. '모름' 은 문서를 안 냈으니 확인할 문서가 없다.
@@ -331,6 +331,34 @@ def apply_review(q: str, verdict: str, why: str,
     row = review.get(q)
     if not row or row.get("ok") is None:
         return UNVERIFIED, f"{verdict} — 맞는 문서인지 확인 안 됨"
+
+    # ★ must 를 **낱말에서 문서로** 옮긴다 (2026-08-30)
+    #   오늘 낱말로 세다 다섯 번 틀렸다 — 연혁·전임교수·시험·시점, 그리고 must.
+    #   '성적 이의신청' 이 **정보공개 이의신청(행정)** 문서를 내는데
+    #   must('이의') 가 인용에 있어서 통과했다.
+    #   한 번은 사고, 두 번은 부류, 세 번은 구조다.
+    #
+    #   ★ O/X 를 그대로 쓰지 않고 **매번 다시 잰다**
+    #     X 를 그대로 쓰면 고쳐도 계속 빨간불이라 아무도 안 본다.
+    #     사람이 정한 건 '정답 문서' 고, 지금 그 문서를 내는지는 자가 본다.
+    #     고치면 저절로 초록이 된다.
+    #
+    #   ★ 두 가지를 다 받는다
+    #     expected      정답 문서가 있다 — 그것을 내야 통과
+    #     not_expected  정답이 코퍼스에 없다 — 그것만 안 내면 된다
+    #                   ('성적 이의신청' 이 이쪽이다. 학사 문서가 아예 없다)
+    doc = " ".join(str(x) for x in (
+        getattr(top, "site_name", ""), getattr(top, "page_title", ""),
+        getattr(top, "title", ""), getattr(top, "page_url", ""),
+        getattr(top, "url", "")) if x)
+    want = (row.get("expected") or "").strip()
+    nope = (row.get("not_expected") or "").strip()
+    if want:
+        return ((verdict, why) if want in doc else
+                (WRONG, f"문서 must — '{want}' 를 내야 하는데 '{doc.strip()}'"))
+    if nope:
+        return ((WRONG, f"문서 must — '{nope}' 는 답이 아니다") if nope in doc
+                else (verdict, why))
     if row.get("ok") is False:
         return WRONG, f"검수 X — {row.get('note') or '엉뚱한 문서'}"
     return verdict, why
@@ -442,8 +470,10 @@ def main(argv: list[str] | None = None) -> int:
             ms = (time.perf_counter() - t0) * 1000
             lat.append(ms)
             v, why = judge(q, expect, must, r)
+            _top = getattr(r, "top", None) or (r.hits[0] if r.hits else None)
             # ★ 사람이 문서를 확인했는지 씌운다 — 자를 고치는 게 아니라 칸을 쪼갠다
-            v, why = apply_review(q, v, why, review)
+            #   문서 must 가 있으면 **지금 낸 문서**와 맞춰 본다 (매번 다시 잰다).
+            v, why = apply_review(q, v, why, review, _top)
             verdicts[v] += 1
             top = getattr(r, "top", None) or (r.hits[0] if r.hits else None)
             # ★ 의심 신호 — 판정에서는 뺀다. 표시로만 남긴다.
