@@ -29,7 +29,7 @@ def test_fetch_resolves_forms_gle(viewform_html):
             return httpx.Response(302, headers={"location": VIEW})
         return httpx.Response(200, text=viewform_html)
     with make_client(h) as c:
-        assert c.fetch_form("https://forms.gle/abc123").title == "총학 챗봇 수요 조사"
+        assert c.fetch_form("https://forms.gle/abc123").title == "행사 참가 신청"
 
 
 def test_fetch_login_required():
@@ -53,8 +53,8 @@ def test_submit_success(form, confirmation_html):
         return httpx.Response(200, text=confirmation_html)
     with make_client(h) as c:
         r = c.submit(form, build_payload(form, {"이름": "a", "소속": "공과대학", "만족도": "5",
-                                                "채널별 이용 빈도 » 인스타": "매일",
-                                                "채널별 이용 빈도 » 카카오톡": "매일"}))
+                                                "채널별 이용 빈도 » 이메일": "매일",
+                                                "채널별 이용 빈도 » 문자": "매일"}))
     assert r.ok and r.status == 200
     assert seen["url"] == POST and seen["referer"] == VIEW
     assert "entry.1001=a" in seen["body"] and "pageHistory=0%2C1" in seen["body"]

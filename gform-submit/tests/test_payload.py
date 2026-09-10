@@ -6,10 +6,10 @@ from gform.payload import OTHER_SENTINEL, PayloadError, build_payload, header_fo
 FULL = {
     "이름": "홍길동",
     "소속": "공과대학",
-    "관심 기능": ["수강신청", "학식"],
+    "관심 세션": ["세미나", "네트워킹"],
     "만족도": "4",
-    "채널별 이용 빈도 » 인스타": "매일",
-    "채널별 이용 빈도 » 카카오톡": "가끔",
+    "채널별 이용 빈도 » 이메일": "매일",
+    "채널별 이용 빈도 » 문자": "가끔",
     "참여일": "2026-09-10",
     "선호 시각": "09:30",
     "학년": "2",
@@ -22,7 +22,7 @@ def test_full_payload(form):
     for k, v in p:
         d.setdefault(k, []).append(v)
     assert d["entry.1001"] == ["홍길동"]
-    assert d["entry.1003"] == ["수강신청", "학식"]       # 같은 이름 반복
+    assert d["entry.1003"] == ["세미나", "네트워킹"]       # 같은 이름 반복
     assert d["entry.1003_sentinel"] == [""]
     assert d["entry.1005"] == ["매일"] and d["entry.1006"] == ["가끔"]
     assert d["entry.1007_year"] == ["2026"] and d["entry.1007_month"] == ["9"] and d["entry.1007_day"] == ["10"]
@@ -48,7 +48,7 @@ def test_required_missing(form):
 
 
 def test_optional_missing_is_fine(form):
-    ans = dict(FULL); ans.pop("관심 기능"); ans.pop("참여일")
+    ans = dict(FULL); ans.pop("관심 세션"); ans.pop("참여일")
     names = {k for k, _ in build_payload(form, ans)}
     assert "entry.1003" not in names and "entry.1007_year" not in names
 
@@ -64,7 +64,7 @@ def test_unknown_option_without_other_rejected(form):
     with pytest.raises(PayloadError, match="선택지에 없는 값"):
         build_payload(form, {**FULL, "학년": "3"})
     with pytest.raises(PayloadError, match="선택지에 없는 값"):
-        build_payload(form, {**FULL, "관심 기능": ["수강신청", "기숙사"]})
+        build_payload(form, {**FULL, "관심 세션": ["세미나", "기숙사"]})
 
 
 def test_multiple_values_on_single_choice_rejected(form):
@@ -104,7 +104,7 @@ def test_email_rejected_when_form_does_not_collect(form):
 
 def test_header(form):
     h = header_for(form)
-    assert h[0] == "이름" and "채널별 이용 빈도 » 인스타" in h
+    assert h[0] == "이름" and "채널별 이용 빈도 » 이메일" in h
     form.collects_email = True
     assert header_for(form)[0] == "emailAddress"
 

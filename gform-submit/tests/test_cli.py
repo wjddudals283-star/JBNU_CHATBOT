@@ -31,9 +31,9 @@ def write_csv(path, header, rows):
         w = csv.writer(f); w.writerow(header); w.writerows(rows)
 
 
-HEADER = ["이름", "소속", "관심 기능", "만족도", "채널별 이용 빈도 » 인스타",
-          "채널별 이용 빈도 » 카카오톡", "참여일", "선호 시각", "학년"]
-ROW = ["홍길동", "공과대학", "수강신청|학식", "4", "매일", "가끔", "2026-09-10", "09:30", "2"]
+HEADER = ["이름", "소속", "관심 세션", "만족도", "채널별 이용 빈도 » 이메일",
+          "채널별 이용 빈도 » 문자", "참여일", "선호 시각", "학년"]
+ROW = ["홍길동", "공과대학", "세미나|네트워킹", "4", "매일", "가끔", "2026-09-10", "09:30", "2"]
 
 
 def test_inspect(patched_client, capsys):
@@ -62,7 +62,7 @@ def test_submit_sends_each_row(patched_client, tmp_path):
     rep = tmp_path / "r.csv"
     assert cli.main(["submit", VIEW, str(p), "--yes", "--report", str(rep)]) == 0
     assert len(patched_client) == 2              # # 줄은 건너뜀
-    assert "entry.1003=%EC%88%98%EA%B0%95%EC%8B%A0%EC%B2%AD" in patched_client[0]   # 수강신청
+    assert "entry.1003=%EC%84%B8%EB%AF%B8%EB%82%98" in patched_client[0]   # 세미나
     with rep.open(encoding="utf-8") as f:
         rows = list(csv.DictReader(f))
     assert [r["ok"] for r in rows] == ["1", "1"] and rows[1]["csv_row"] == "4"
@@ -85,7 +85,7 @@ def test_submit_limit(patched_client, tmp_path):
 
 def test_submit_custom_sep_and_entry_headers(patched_client, tmp_path):
     header = ["entry.1001", "entry.1002", "entry.1003", "entry.1004", "entry.1005", "entry.1006"]
-    p = tmp_path / "a.csv"; write_csv(p, header, [["a", "인문대학", "수강신청;장학금", "1", "매일", "매일"]])
+    p = tmp_path / "a.csv"; write_csv(p, header, [["a", "인문대학", "세미나;워크숍", "1", "매일", "매일"]])
     assert cli.main(["submit", VIEW, str(p), "--yes", "--sep", ";"]) == 0
     body = patched_client[0]
     assert body.count("entry.1003=") == 2

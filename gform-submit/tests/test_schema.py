@@ -5,7 +5,7 @@ from gform.schema import QuestionType, SchemaError, normalize_form_url, parse_fo
 
 
 def test_title_and_pages(form):
-    assert form.title == "총학 챗봇 수요 조사"
+    assert form.title == "행사 참가 신청"
     assert form.page_count == 2                 # 페이지 나눔 하나
     assert form.fbzx == "-7342119912345678901"
     assert form.page_history == "0,1"
@@ -14,8 +14,8 @@ def test_title_and_pages(form):
 
 def test_input_questions_in_order(form):
     labels = [q.label for q in form.inputs]
-    assert labels == ["이름", "소속", "관심 기능", "만족도",
-                      "채널별 이용 빈도 » 인스타", "채널별 이용 빈도 » 카카오톡",
+    assert labels == ["이름", "소속", "관심 세션", "만족도",
+                      "채널별 이용 빈도 » 이메일", "채널별 이용 빈도 » 문자",
                       "참여일", "선호 시각", "학년"]
 
 
@@ -42,7 +42,7 @@ def test_checkbox_is_multi(form):
 
 def test_grid_rows_and_page(form):
     a, b = form.by_entry(1005), form.by_entry(1006)
-    assert a.row_label == "인스타" and b.row_label == "카카오톡"
+    assert a.row_label == "이메일" and b.row_label == "문자"
     assert a.page == 1                            # 페이지 나눔 뒤
     assert form.by_entry(1001).page == 0
 
