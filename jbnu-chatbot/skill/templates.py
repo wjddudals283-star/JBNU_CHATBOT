@@ -1022,10 +1022,16 @@ def render_section(result, *, utterance: str = "") -> dict:
 
     if result.outcome is Outcome.NOT_FOUND:
         # ★ 조회는 했다. 몇 개를 봤는지 밝힌다 — 안 찾아보고 없다고 한 것과 다르다.
+        # ★ 내부 숫자를 학생에게 보여주지 않는다 (2026-10-07 D-0)
+        #   "모아둔 안내 70,795건을 확인했어요" 가 나가고 있었다.
+        #   이 숫자는 **우리 코퍼스 규모**고 학생에게 아무 뜻이 없다.
+        #   코퍼스가 자라면 숫자가 바뀌는데 그게 답의 일부처럼 보이는 것도 나쁘다.
+        #   남길 것은 **찾아봤다는 사실**이다 — 안 찾아보고 없다고 한 것과
+        #   찾아보고 없다고 한 것은 다르고, 그 구별은 학생에게도 값이 있다.
         return kakao.response(
             [kakao.simple_text(
                 f"'{subject}'에 대한 안내를 찾지 못했어요.\n"
-                f"모아둔 안내 {result.searched_sections:,}건을 확인했어요.\n\n"
+                "학교 홈페이지에서 모은 안내를 다 찾아봤어요.\n\n"
                 f"{SEARCH_HINT}")],
             [kakao.quick_reply("처음으로")])
 
@@ -1268,7 +1274,7 @@ def render_notices(result, *, utterance: str = "") -> dict:
         return kakao.response(
             [kakao.simple_text(
                 f"'{subject}'{J(subject, '이/가')} 제목에 든 공지를 찾지 못했어요.\n"
-                f"모아둔 공지 {result.searched_total:,}건을 확인했어요.\n\n"
+                "모아둔 공지를 다 찾아봤어요.\n\n"
                 f"제목에 없을 뿐 본문에는 있을 수 있어요.\n{SEARCH_HINT}")],
             [kakao.quick_reply("처음으로")])
 
