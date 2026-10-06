@@ -1145,7 +1145,18 @@ def render_section(result, *, utterance: str = "") -> dict:
                 header = f"'{subject}'{J(subject, '으로/로')} 찾은 건 이거예요"
                 tail = "이게 답인지는 확인이 필요해요. 눌러서 원문을 봐 주세요."
             else:
-                header = f"'{subject}' 안내가 여러 곳에 있어요"
+                # ★ 판정이 '스쳤다' 면 그렇게 말한다 (2026-10-07)
+                #   '근로장학생' 에 "안내가 여러 곳에 있어요" 가 나갔다.
+                #   그런데 우리 판정은 "제목·첫머리에 없음 — 본문에서 스침" 이었다.
+                #   **결함은 후보가 아니라 문장이 거짓인 것**이다.
+                #   후보를 지우면 '화학공학과 졸업요건' 같은 맞는 답이 죽는다 —
+                #   한 번 그렇게 했다가 되돌렸다. 이번엔 **문장만** 바꾼다.
+                #   ④ 와 같은 모양이다: 지어내지 말고 실제 판정을 말하기.
+                _gz = getattr(result, "grazed_token", "")
+                if _gz:
+                    header = f"'{_gz}'{J(_gz, '은/는')} 제목에는 없었어요"
+                else:
+                    header = f"'{subject}' 안내가 여러 곳에 있어요"
                 # ★ '어느 학과인지 알려주시면' 이 3턴에서 죽고 있었다 (2026-08-28)
                 #   학생은 이 말에 **'경제학부' 라고만** 답한다. 실측으로 확인했다.
                 #   서버는 상태를 안 들으므로 그건 새 질문이고, 주제가 증발한다.
@@ -1158,6 +1169,16 @@ def render_section(result, *, utterance: str = "") -> dict:
                 #   ★ 목록에 **없는 학과도 된다**고 말한다
                 #     대표가 겪은 건 '표에 뜬 과 말고 내 과' 였다.
                 #     목록만 보여주면 학생은 거기 없으면 끝이라고 읽는다.
+                # ★ 꼬리도 판정을 따른다 — 헤더만 고치면 "눌러서 확인해 주세요" 가 남는다.
+                #   스친 것이면 "이 문서들 안에 있을 수 있어요" 가 사실이다.
+                if _gz:
+                    tail = (f"'{_gz}'{J(_gz, '은/는')} 이 문서들 제목에는 없고 "
+                            "본문에만 나왔어요." + "\n" +
+                            "이 안에 있을 수도 있어서 같이 보여드려요.")
+                    card, _ = kakao.list_card(header, items)
+                    return kakao.response(
+                        [card, kakao.simple_text(tail)],
+                        [kakao.quick_reply("처음으로")])
                 ex = _dept_example(getattr(result, 'hits', None))
                 if dept_dependent:
                     tail = (f"학과마다 내용이 달라요.\n"

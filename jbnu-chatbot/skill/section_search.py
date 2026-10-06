@@ -336,6 +336,13 @@ class SearchResult:
     candidates_matched: int = 0
     candidates_returned: int = 0
     answer_depth: int = 0     # 답이 후보 목록에서 몇 번째였나 (잘림의 영향 판단)
+    # ★ 핵심 낱말이 **제목에 없고 본문에서만 스쳤을 때** 그 낱말.
+    #   판정은 이미 하고 있었는데 화면이 안 썼다 — defer_reason 에만 적혀서
+    #   "'근로장학생' 안내가 여러 곳에 있어요" 가 나갔다. 그건 거짓이다.
+    #   **후보는 그대로 두고 문장만 고친다** (2026-10-07).
+    #   후보까지 지웠다가 '화학공학과 졸업요건' 같은 맞는 답이 죽었다 —
+    #   그때는 되돌렸고, 이번엔 문장만 바꾼다.
+    grazed_token: str = ""
     defer_reason: str = ""    # 왜 보류했나 — 진단용. 조용히 접으면 못 고친다
     # 답이 학생 속성에 의존한다 — 지금 관측된 것은 '학과' 하나뿐이다.
     # 학번·과정유형·학년은 있을 법하지만 관측이 없어서 안 넣는다.
@@ -884,6 +891,8 @@ def _attempt(conn, utterance: str, tokens: list[str], *, repo,
     if core_off:
         result.outcome = Outcome.AMBIGUOUS
         result.defer_reason = f"'{core}' 가 제목·첫머리에 없음 (본문에서 스침)"
+        # 판정을 화면이 쓸 수 있게 남긴다. 후보는 건드리지 않는다.
+        result.grazed_token = core
         return result
     if page_only:
         result.defer_reason = (f"'{' '.join(off)}' 가 제목·첫머리에 없어 "
