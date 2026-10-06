@@ -61,16 +61,25 @@ def load_vocab(conn: sqlite3.Connection) -> dict[str, int]:
     return vocab
 
 
-def split(token: str, vocab: dict[str, int]) -> list[str] | None:
+def split(token: str, vocab: dict[str, int], *,
+          whole_ok: bool = True) -> list[str] | None:
     """붙여 쓴 토큰 → 낱말들. 쪼갤 이유가 없으면 None.
 
     ★ 사전에 있는 말은 안 쪼갠다
       '졸업요건' 은 그 자체가 코퍼스에 있는 말이다. 쪼개면 오히려 넓어져서
       엉뚱한 게 붙는다. 통째로 있는 말은 통째로 둔다.
+
+    ★ whole_ok=False 는 **2단 분해**다 (2026-10-07)
+      '교내장학금종류' 가 1단에서 ['교내장학금','종류'] 로 쪼개졌는데
+      '교내장학금'(DF 6)이 너무 드물어서 검색이 못 찾았다.
+      띄어 쓴 '교내 장학금 종류'(['교내','장학금','종류'])는 찾는다.
+      IDF 가 드문 조각을 선호하는 건 맞는 설계다('이의신청' 을 지킨다) —
+      다만 **1단으로 못 찾았을 때는** 더 쪼개 볼 값이 있다.
+      그때 통째 조각을 후보에서 빼야 한다. 안 빼면 같은 답이 또 나온다.
     """
     if not token or len(token) < MIN_GLUED or not vocab:
         return None
-    if token in vocab:
+    if whole_ok and token in vocab:
         return None                      # 통째로 있는 말은 건드리지 않는다
     if not HANGUL.match(token):
         return None                      # 영문·숫자 섞인 것은 다른 문제다
@@ -83,6 +92,8 @@ def split(token: str, vocab: dict[str, int]) -> list[str] | None:
         for j in range(max(0, i - MAX_PIECE), i):
             if i - j < MIN_PIECE:
                 continue
+            if not whole_ok and j == 0 and i == n:
+                continue          # 2단에서는 통째 조각을 후보에서 뺀다
             d = vocab.get(token[j:i])
             if not d:
                 continue

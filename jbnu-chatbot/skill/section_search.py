@@ -658,6 +658,31 @@ def search(conn, utterance: str, *, repo,
                 third.defer_reason = f"붙여 쓴 말을 쪼개서 찾음: {spaced}"
                 return third
 
+            # ★ 2단 분해 — **1단으로도 못 찾았을 때만** (2026-10-07)
+            #   '교내장학금종류' 가 1단에서 ['교내장학금','종류'] 로 쪼개졌는데
+            #   '교내장학금'(DF 6)이 너무 드물어서 검색이 못 찾았다.
+            #   띄어 쓴 '교내 장학금 종류' 는 찾는다 — 조각이 덜 쪼개진 것이다.
+            #
+            #   ★ 성공 경로를 지나가지 않는다
+            #     1단에서 찾았으면 위에서 이미 return 했다. 여기 오는 것은
+            #     **지금도 못 찾는 것들**이고, 그래서 잃을 답이 없다.
+            #     IDF 가 드문 조각을 선호하는 설계는 그대로 둔다
+            #     ('이의신청' 을 지키는 게 그 설계의 목적이다) —
+            #     못 찾았을 때만 통째 조각을 빼고 한 번 더 쪼갠다.
+            more: list[str] = []
+            for piece in pieces:
+                got2 = glued.split(piece, vocab, whole_ok=False)
+                more.extend(got2 if got2 else [piece])
+            if more != pieces:
+                spaced2 = " ".join(more)
+                log.info("[glued2] %s → %s", pieces, more)
+                fourth = _attempt(conn, utterance, more, repo=repo, expand={})
+                if fourth.outcome is Outcome.FOUND:
+                    fourth.via_split = spaced2
+                    fourth.defer_reason = (
+                        f"붙여 쓴 말을 두 번 쪼개서 찾음: {spaced2}")
+                    return fourth
+
     expand = {t: (expand_token(t) - {t}) for t in tokens}
     expand = {t: v for t, v in expand.items() if v}
     if not expand:
