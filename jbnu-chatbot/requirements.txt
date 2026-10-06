@@ -1,7 +1,38 @@
-fastapi>=0.115
-uvicorn[standard]>=0.30
-httpx>=0.27
-selectolax>=0.3.21
-PyYAML>=6.0
+# ★ 상한을 건다 — 고정 안 된 의존성은 시한폭탄이고 **터지는 시점을 우리가 못 고른다**
+#
+#   2026-10-07 D-0 에 실제로 터졌다.
+#       selectolax 가 1.0 을 내면서 `selectolax.parser` 를 폐기했고,
+#       Render 빌드가 새로 받아 import 단계에서 막혔다.
+#       8/31 까지 전부 정상 배포됐는데, 우리가 아무것도 안 바꾼 날 깨졌다.
+#
+#         ImportError: Modest backend is deprecated since selectolax 1.0.
+#           use `from selectolax.lexbor import LexborHTMLParser` instead
+#
+#       Live 는 2230a27(8/31) 그대로였고 그날 커밋 둘이 전부 Failed 였다.
+#       **코드는 멀쩡한데 배포가 안 붙은 날**이다.
+#
+# ★ 왜 `==` 가 아니라 상한인가 (2026-10-07 판단)
+#   지금 돌고 있는 2230a27 환경의 **정확한 버전을 우리가 모른다.**
+#   `==` 로 박으면 멀쩡히 도는 환경을 바꾸게 되고, D-0 에 두 번째 빌드 실패를
+#   낼 수 있다. 상한은 **지금 깔린 것을 안 건드리면서** 다음 breaking 만 막는다.
+#
+#   ★ 이걸로 다 막히지는 않는다 — 정직하게 적어 둔다.
+#     0.x 라이브러리는 마이너에서도 breaking 을 낸다(selectolax 0.4→1.0 이 그랬다).
+#     진짜 해결은 **lock 파일**이고, 그러려면 서버에서 `pip freeze` 를 떠야 한다.
+#     개강 뒤 조용한 날 할 일로 남긴다.
+
+fastapi>=0.115,<1.0
+uvicorn[standard]>=0.30,<1.0
+
+httpx>=0.27,<1.0
+
+# ★ selectolax 는 1.0 에서 Modest 백엔드를 폐기했다. 우리는 아직 그걸 쓴다.
+#   crawler/parsers/*.py 가 `from selectolax.parser import HTMLParser` 다.
+#   lexbor 로 옮기는 건 **파서가 긁는 내용이 달라질 수 있어** 전수 재측정이 필요하다.
+#   D-0 에 할 일이 아니다 — 개강 뒤로 미룬다.
+selectolax>=0.3.21,<1.0
+
+PyYAML>=6.0,<7.0
+
 # 학칙·규정이 전부 HWP 다 (OLE 복합문서). crawler/parsers/hwp.py 가 쓴다.
-olefile>=0.47
+olefile>=0.47,<1.0
