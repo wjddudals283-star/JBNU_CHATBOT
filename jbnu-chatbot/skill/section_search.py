@@ -336,6 +336,12 @@ class SearchResult:
     candidates_matched: int = 0
     candidates_returned: int = 0
     answer_depth: int = 0     # 답이 후보 목록에서 몇 번째였나 (잘림의 영향 판단)
+    # ★ 핵심 낱말이 **본문에 스쳤을 뿐**일 때 그 낱말. (2026-10-07)
+    #   판정은 이미 하고 있었는데 화면이 그 판정을 안 썼다 —
+    #   defer_reason 에만 적고 render_section 은 못 읽어서
+    #   '오늘 날씨' 가 "여러 곳에 있어요" + 전자대자보·JBNU News 로 나갔다.
+    grazed_token: str = ""
+    grazed_where: str = ""    # 어디에 스쳤나 — 학생에게 사실대로 말한다
     defer_reason: str = ""    # 왜 보류했나 — 진단용. 조용히 접으면 못 고친다
     # 답이 학생 속성에 의존한다 — 지금 관측된 것은 '학과' 하나뿐이다.
     # 학번·과정유형·학년은 있을 법하지만 관측이 없어서 안 넣는다.
@@ -854,6 +860,14 @@ def _attempt(conn, utterance: str, tokens: list[str], *, repo,
     if core_off:
         result.outcome = Outcome.AMBIGUOUS
         result.defer_reason = f"'{core}' 가 제목·첫머리에 없음 (본문에서 스침)"
+        # ★ 판정을 화면이 쓸 수 있게 남긴다 (2026-10-07)
+        #   '오늘 날씨' 가 되묻기로 나가고 있었다 — 전자대자보·JBNU News 를
+        #   고르라고 했다. 원인은 '날씨' 가 연구뉴스 기사
+        #   ('기상·기후 AI 해커톤')에 **한 번 스친** 것이다.
+        #   우리는 이미 '스쳤다' 고 판정해 놓고 화면은 '여러 곳에 있어요' 라고 말했다.
+        #   판정과 문구가 어긋나면, 아는 것을 알면서 틀리게 말하는 것이다.
+        result.grazed_token = core
+        result.grazed_where = (top.page_title or "").strip()
         return result
     if page_only:
         result.defer_reason = (f"'{' '.join(off)}' 가 제목·첫머리에 없어 "

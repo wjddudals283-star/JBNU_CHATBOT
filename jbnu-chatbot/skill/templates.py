@@ -1080,13 +1080,50 @@ def render_section(result, *, utterance: str = "") -> dict:
         #   그 판정이 needs_attribute 다. 축이 하나면 두 곳에서 안 어긋난다.
         dept_dependent = getattr(result, "needs_attribute", "") == "학과"
         missing = getattr(result, "missing_tokens", [])
+
+        # ★ 본문에 스쳤을 뿐이면 **후보를 안 보여준다** (2026-10-07)
+        #   '오늘 날씨' 에 전자대자보·JBNU News 를 고르라고 하고 있었다.
+        #   학생은 날씨를 물었고 그건 학교 안내가 아니다.
+        #   고를 것이 없는데 고르라고 하면 틀린 답보다 나쁘지 않을 뿐이고,
+        #   학생이 "이 봇은 아무거나 준다" 로 읽는다.
+        #   명확히 끊는다 — 이것도 '모르는 것을 모른다고 말하는' 자리다.
+        grazed = getattr(result, "grazed_token", "")
+        if grazed:
+            where = getattr(result, "grazed_where", "")
+            lines = [f"'{grazed}'{J(grazed, '은/는')} 학교 안내에서 "
+                     f"다루는 내용이 아니에요."]
+            if where:
+                # 어디에 스쳤는지까지 밝힌다 — 왜 못 찾았는지 학생이 알 수 있게
+                lines.append(f"'{where}' 본문에 한 번 나왔을 뿐이에요.")
+            lines += ["", "학교 안내·학사일정·학식·총학 공지를 찾아드릴 수 있어요."]
+            return kakao.response(
+                [kakao.simple_text("\n".join(lines))],
+                [kakao.quick_reply("처음으로")])
         if missing:
             # 질문의 낱말을 못 찾았으면 그 사실을 먼저 말한다.
             # 비슷한 걸 보여주되 답이라고 말하지 않는다.
             miss = " ".join(missing)
             header = f"'{miss}' 관련 안내는 못 찾았어요"
+            # ★ '비슷한 것들이에요' 를 바꿨다 (2026-10-07)
+            #   '성적 이의신청' 화면에 정관·농업과학기술연구소·인재등용관이 떴다.
+            #   학생 눈에 **안 비슷하다.** 우리가 '비슷하다' 고 말했는데
+            #   안 비슷하면 말과 화면이 안 맞는다.
+            #
+            #   ★ 순위는 안 건드린다. **왜 이걸 보여주는지를 사실대로 말한다.**
+            #     못 찾은 건 '성적' 이고 보여주는 건 '이의신청' 이 든 것들이다.
+            #     그 근거는 top.matched 에 이미 있다 — 지어내지 않는다.
+            #   실측: 이 문구가 나가는 화면 23건, 전부 댈 근거가 있었다.
+            _t0 = getattr(result, "top", None)
+            _kept = [t for t in (getattr(_t0, "matched", None) or [])
+                     if t not in missing]
+            if _kept:
+                _why = (f"'{' '.join(_kept)}'"
+                        f"{J(_kept[-1], '이/가')} 든 다른 안내예요.")
+            else:
+                # 댈 근거가 없으면 '비슷하다' 고도 말하지 않는다.
+                _why = "대신 찾아본 것들이에요."
             tail = (f"'{miss}'{J(miss, '이/가')} 들어간 안내는 없었어요. "
-                    f"비슷한 것들이에요.\n\n{SEARCH_HINT}")
+                    f"{_why}" + "\n\n" + SEARCH_HINT)
         else:
             # ★ 조사는 바로 앞말('안내')을 따른다. subject 를 따르게 걸었다가
             #   "'통금' 안내이 여러 곳에" 가 나왔다 — 원래 맞던 걸 깬 것이다.
