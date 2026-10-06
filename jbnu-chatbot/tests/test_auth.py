@@ -75,7 +75,16 @@ def test_health는_공개지만_운영정보를_안_담는다(client):
     # ★ 정확 일치가 아니라 '무엇이 새면 안 되는가' 로 잰다.
     #   warm 은 규모가 아니라 상태다 — '떴다' 와 '답할 준비가 됐다' 는 다르고,
     #   배포 확인에 필요하다. 반면 아래 것들은 서비스 내부를 알려준다.
-    assert set(body) <= {"ok", "warm"}
+    # ★ commit 을 허용 목록에 넣는다 (2026-10-07)
+    #   저장소가 Public 이라 커밋 해시는 **감출 값이 아니다.**
+    #   이 테스트가 지키는 것은 '감출 값이 새지 않는가' 이지
+    #   '키가 몇 개인가' 가 아니다.
+    #   넣은 이유: 1adf2ce 를 푸시하고 2분 뒤 실서버가 옛 동작을 냈을 때
+    #   배포가 안 붙은 건지 코드가 틀린 건지 **아무도 못 갈랐다.**
+    #   아침에 '무엇이 떠 있는지부터 확인하고 잰다' 를 규칙으로 정해 놓고
+    #   확인할 방법을 안 만들어 뒀다.
+    #   DB 규모·경로·토큰처럼 감출 값은 여전히 여기 오면 안 된다.
+    assert set(body) <= {"ok", "warm", "commit"}
     assert body["ok"] is True
     assert isinstance(body["warm"], bool)
     for leak in ("meal_service", "scheduler", "sources", "last_tick",

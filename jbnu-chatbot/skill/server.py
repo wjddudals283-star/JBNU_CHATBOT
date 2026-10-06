@@ -250,7 +250,21 @@ def create_app(db_path: pathlib.Path | None = None, *,
           이걸 못 보면 첫 학생이 대신 확인해 주게 된다.
         """
         w = app.state.warm
-        return {"ok": True, "warm": bool(w and w.get("ok"))}
+        # ★ **무엇이 떠 있는지**를 낸다 (2026-10-07)
+        #   오늘 아침에 '실서버를 잴 때는 무엇이 떠 있는지부터 확인하고 잰다' 를
+        #   규칙으로 정했는데, 정작 **확인할 방법이 없었다.**
+        #   1adf2ce 를 푸시하고 2분 뒤 실서버가 옛 동작을 냈을 때
+        #   배포가 안 붙은 건지 코드가 틀린 건지 아무도 못 갈랐다.
+        #   세 커밋이 다른 파일을 건드렸는데 전부 옛날이면 배포 쪽인데,
+        #   그걸 **추론**으로 말해야 했다.
+        #
+        #   ★ 공개해도 되는 값이다 — 저장소가 Public 이고 커밋도 공개다.
+        #     '운영 정보를 담지 않는다' 는 원칙은 **감출 값**에 대한 것이고,
+        #     warm 을 예외로 낸 이유가 여기에도 그대로 적용된다:
+        #     배포 확인할 때 못 보면 첫 학생이 대신 확인해 주게 된다.
+        commit = (os.environ.get("RENDER_GIT_COMMIT") or "")[:7]
+        return {"ok": True, "warm": bool(w and w.get("ok")),
+                "commit": commit or "unknown"}
 
     @app.get("/admin/status", dependencies=[Depends(auth.require_token)])
     def status() -> dict:

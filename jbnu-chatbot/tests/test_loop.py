@@ -214,7 +214,10 @@ def test_스케줄러_상태는_인증_뒤에서_보고된다(tmp_path, monkeypa
     app = server.create_app(tmp_path / "y.db", with_scheduler=True)
     with TestClient(app) as client:
         public = client.get("/health").json()
-        assert set(public) <= {"ok", "warm"} and public["ok"] is True
+        # ★ commit 은 공개 저장소의 공개 커밋이라 감출 값이 아니다.
+        #   이 검사가 지키는 것은 DB 규모·경로·토큰 같은 **운영 정보**다.
+        assert set(public) <= {"ok", "warm", "commit"}
+        assert public["ok"] is True
         assert client.get("/admin/status").status_code == 401
         body = client.get("/admin/status",
                           headers={auth.HEADER_NAME: token}).json()
