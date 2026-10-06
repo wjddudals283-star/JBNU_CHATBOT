@@ -56,9 +56,18 @@ def targets(limit: int | None = None, *, include_dept: bool = True) -> list[dict
     """본부 /web/ + 학과·기관 subview. 발견 결과에 있는 것만 간다."""
     out, seen = [], set()
 
+    # ★ 제외 원천은 **애초에 안 긁는다** (2026-10-07)
+    #   개인정보가 든 게시판이다 — config/excluded_sources.yaml 에 이유와
+    #   누가·언제 봤는지가 같이 적혀 있다.
+    #   답변 경로에서도 같은 목록으로 거른다(section_search.is_excluded).
+    #   둘 다 필요하다: 수집 제외는 앞으로, 답변 제외는 이미 들어온 것.
+    from skill.section_search import is_excluded
+
     doc = yaml.safe_load(PAGES_YAML.read_text(encoding="utf-8"))
     for p in doc.get("pages", []):
         u = p["url"]
+        if is_excluded(u):
+            continue
         sp = up.urlsplit(u)
         if sp.hostname != TARGET_HOST or p.get("kind") in SKIP_KINDS:
             continue
@@ -74,7 +83,7 @@ def targets(limit: int | None = None, *, include_dept: bool = True) -> list[dict
         ddoc = yaml.safe_load(DEPT_YAML.read_text(encoding="utf-8"))
         for p in ddoc.get("pages", []):
             u = p["url"]
-            if u in seen:
+            if u in seen or is_excluded(u):
                 continue
             seen.add(u)
             out.append({"url": u, "path": up.urlsplit(u).path,
@@ -85,7 +94,9 @@ def targets(limit: int | None = None, *, include_dept: bool = True) -> list[dict
         sdoc = yaml.safe_load(SITES_YAML.read_text(encoding="utf-8"))
         for p in sdoc.get("pages", []):
             u = p["url"]
-            if u in seen:
+            # ★ 세 소스 **전부**에 걸어야 한다 — 처음에 둘만 걸었다가
+            #   민원게시판 23건이 그대로 남았다. 한 곳만 막으면 안 막힌다.
+            if u in seen or is_excluded(u):
                 continue
             seen.add(u)
             out.append({"url": u, "path": up.urlsplit(u).path or "/",

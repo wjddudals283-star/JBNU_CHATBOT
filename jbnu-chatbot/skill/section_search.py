@@ -414,35 +414,29 @@ def is_label(text: str) -> bool:
     return not selfcontained.is_self_contained(text)
 
 
-# ★ 게시판 **목록**은 인용하지 않는다 — 학생 실명이 섞여 있다 (2026-10-07 D-0)
-#   생활관 민원게시판이 코퍼스에 들어왔고, '기숙사 통금' 에 이런 답이 나갔다.
-#
-#     7912 | 새빛관 | 생활관 2차 납부 | 접수 | 박수연 | 2026.10.05
-#     7911 | 혜민관 | 통금일정관련   | 접수 | 정연주 | 2026.10.05
-#
-#   요구사항 1순위가 '개인정보 제외' 다. 이건 확신 오답보다 위다 —
-#   틀린 답은 학생이 헛걸음하지만, 이건 **다른 학생의 이름이 나간다.**
-#
-# ★ 벌점이 아니라 **제외**다
-#   벌점은 '운이 나쁘면 나간다' 는 뜻이고, 개인정보에 그건 쓸 수 없다.
-#
-# ★ 표지는 **원문이 쓴 칸 이름**이다 — 우리가 지어낸 게 아니다
-#   게시판 목록은 '작성자 · 등록일 · 조회수 · Total : · 리스트 (' 를 쓴다.
-#   둘 이상이면 그건 목록이고, 목록은 애초에 답이 아니다
-#   (8/14 에도 '게시판 목록을 답인 척 내보내던 문구' 를 되돌린 적이 있다).
-#
-#   실측(로컬 74% 수집): 67,912 잎 중 **21건**(0.03%). 잃는 안내가 없다.
-#   board_detail(상세)은 이미 수집에서 빼고 있었는데 **목록은 아니었다.**
-#   수집 목록에서 빼는 것은 discover 를 다시 돌려야 해서 개강 뒤에 한다.
-#   그때까지 답변 경로에서 끊는다 — 이미 들어온 것도 같이 막힌다.
-BOARD_LIST_MARKS = ("작성자", "등록일", "조회수", "Total :", "리스트 (")
-BOARD_LIST_MIN = 2
+# ★ 수집·인용에서 통째로 빼는 원천 — config/excluded_sources.yaml
+#   개인정보가 든 게시판을 **URL 로** 막는다. 모양으로 잡으려다 실패했다:
+#   그 게시판을 본 적이 없는데 '작성자·등록일·조회수' 로 표지를 지어냈고,
+#   실물에는 그 글자가 없어서 하나도 안 막혔다 (2026-10-07).
+#   목록은 config 에 두고 사람이 관리한다 — 왜·언제·누가 봤는지와 함께.
+EXCLUDED_PATH = _CFG / "excluded_sources.yaml"
 
 
-def is_board_list(text: str) -> bool:
-    """게시판 목록인가. 원문이 쓴 칸 이름이 둘 이상이면 목록이다."""
-    t = text or ""
-    return sum(1 for m in BOARD_LIST_MARKS if m in t) >= BOARD_LIST_MIN
+@functools.lru_cache(maxsize=1)
+def excluded_matches() -> tuple[str, ...]:
+    """URL 에 이 조각이 있으면 후보에서 뺀다. 없으면 빈 튜플(기능이 꺼질 뿐)."""
+    try:
+        import yaml
+        doc = yaml.safe_load(EXCLUDED_PATH.read_text(encoding="utf-8")) or {}
+        return tuple(str(e["match"]).strip()
+                     for e in (doc.get("excluded") or []) if e.get("match"))
+    except Exception:  # noqa: BLE001
+        return ()
+
+
+def is_excluded(page_url: str) -> bool:
+    u = page_url or ""
+    return any(m in u for m in excluded_matches())
 
 
 def score_rows(rows: list[dict[str, Any]], tokens: Sequence[str],
@@ -452,8 +446,10 @@ def score_rows(rows: list[dict[str, Any]], tokens: Sequence[str],
     for r in rows:
         text = r.get("text") or ""
         path = r.get("path") or ""
-        # ★ 게시판 목록은 후보에서 아예 뺀다 (개인정보 · 위 주석 참고)
-        if is_board_list(text):
+        # ★ 제외 원천은 후보에서 아예 뺀다 (개인정보 · config/excluded_sources.yaml)
+        #   벌점이 아니라 제외다 — 벌점은 '운이 나쁘면 나간다' 는 뜻이고
+        #   개인정보에 그건 쓸 수 없다.
+        if is_excluded(r.get("page_url") or ""):
             continue
         fragment = is_label(text)
         matched, s = [], 0.0
