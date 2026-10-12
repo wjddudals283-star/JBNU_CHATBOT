@@ -169,6 +169,11 @@ _CFG = pathlib.Path(__file__).resolve().parents[1] / "config"
 SITES_PATH = _CFG / "sites.yaml"
 ALIASES_PATH = _CFG / "site_aliases.yaml"
 SYNONYMS_PATH = _CFG / "title_synonyms.yaml"
+# ★ 사람이 이은 동의어는 **따로 둔다** (2026-10-12)
+#   title_synonyms.yaml 은 tools/build_synonyms.py 가 통째로 덮어쓴다.
+#   거기에 손으로 넣으면 다음 재생성에 날아간다 — 원칙 충돌이 아니라
+#   덮어쓰기 문제였다. 근거(source·added)도 그 파일에 같이 적는다.
+SYNONYMS_MANUAL_PATH = _CFG / "synonyms_manual.yaml"
 
 
 @functools.lru_cache(maxsize=1)
@@ -217,8 +222,19 @@ def title_synonyms() -> dict[str, frozenset[str]]:
         import yaml
         doc = yaml.safe_load(SYNONYMS_PATH.read_text(encoding="utf-8")) or {}
         off = set(doc.get("disabled") or [])
+        groups = list(doc.get("groups") or [])
+        # ★ 사람이 이은 묶음을 **뒤에 더한다.** 자동 추출로는 못 찾는 짝이 있다 —
+        #   '통금' 은 학교가 안 쓰는 말이라 코퍼스 어휘 겹침으로는 영원히 안 나온다.
+        #   관측의 출처를 '코퍼스 ↔ 폴백 로그 대조' 로 넓힌 것이고,
+        #   양쪽 다 원문이다. 근거는 synonyms_manual.yaml 에 적혀 있다.
+        try:
+            mdoc = yaml.safe_load(
+                SYNONYMS_MANUAL_PATH.read_text(encoding="utf-8")) or {}
+            groups += list(mdoc.get("groups") or [])
+        except FileNotFoundError:
+            pass              # 없으면 자동 추출만 쓴다
         out: dict[str, set[str]] = {}
-        for g in doc.get("groups") or []:
+        for g in groups:
             if g.get("label") in off:
                 continue          # 사람이 끈 묶음은 쓰지 않는다
             members = [m for m in g.get("members") or [] if m]
@@ -688,6 +704,24 @@ def search(conn, utterance: str, *, repo,
     if not expand:
         return first
     second = _attempt(conn, utterance, tokens, repo=repo, expand=expand)
+    # ★ 1차가 **못 찾음**이면 2차의 되묻기도 1차보다 낫다 (2026-10-12)
+    #   '기숙사 통금' 이 그랬다. 학교는 '통금' 이라 쓰지 않고
+    #   '귀관 시간'(생활관생 수칙 제5조) · '출입제한시간'(FAQ) 이라 쓴다.
+    #   동의어를 이었더니 2차 후보에 **정답이 들어왔는데**,
+    #   `second is not FOUND → return first` 가 그 후보를 버리고
+    #   "못 찾았어요" 를 내보냈다.
+    #
+    #   1차가 아무것도 못 준 자리에서는 후보 목록이라도 주는 게 낫다 —
+    #   학생이 '생활관생 수칙' 을 눌러 23:50 을 볼 수 있다.
+    #   ① core_off 문구가 "제목에는 없었어요 + 후보" 로 정직하게 말해 준다.
+    #
+    #   실측: 1차 NOT_FOUND + 2차 AMBIGUOUS 가 **4건**(전부 통금 질문)이고
+    #   1차가 이미 못 찾음이라 **잃을 답이 0**이다.
+    #   지금 FOUND 인 것은 1차에서 이미 return 하므로 이 줄을 지나가지 않는다.
+    if (second.outcome is Outcome.AMBIGUOUS and second.hits
+            and first.outcome in (Outcome.NOT_FOUND, Outcome.NO_DATA)):
+        second.via_synonym = second.via_synonym or "동의어"
+        return second
     if second.outcome is not Outcome.FOUND:
         return first          # 넓혀도 못 찾으면 원래 판정을 그대로 쓴다
     # 어느 이름으로 올라와 있었는지 밝힌다
