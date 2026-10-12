@@ -281,22 +281,29 @@ def create_app(db_path: pathlib.Path | None = None, *,
         #   health 가 DB 때문에 죽으면 안 되므로 전부 감싼다.
         out = {"ok": True, "warm": bool(w and w.get("ok")),
                "commit": commit or "unknown"}
+        # ★ 원천별로 낸다 — **뭉쳐 세면 지표가 거짓 안심을 준다** (2026-10-13)
+        #   처음엔 MAX(started_at) 하나만 냈다. 그러면 안내 페이지 전수가
+        #   새벽에 성공하는 것만으로 **초록불**이 되고, 생협이 두 달(1507h)
+        #   죽어 있는 걸 가린다. 실제로 만들어서 확인했다 —
+        #   생협·공지·총학시트·어휘사전이 전부 stale 인데 crawl_stale=False.
+        #   침묵을 잡으려고 만든 지표가 침묵을 가렸으니 **없는 것보다 나빴다.**
+        #
+        #   전제: 임계가 원천마다 다르다. 생협은 노트북/대표PC 백필이라 192h 가
+        #        정상이고, 24h 를 그대로 대면 매일 거짓 경보가 뜬다.
+        #        그 판단은 crawler.schedule.heartbeat 가 이미 한다 — 다시 적지 않는다.
+        #   원천 이름은 config/sources.yaml 에 있고 리포가 Public 이라 숨길 값이 아니다.
         try:
+            from crawler import schedule as _sched
             c = repo.connect(app.state.db_path, readonly=True)
             try:
-                row = c.execute(
-                    "SELECT MAX(started_at) FROM crawl_run "
-                    "WHERE outcome IN ('success','unchanged')").fetchone()
-                last = row[0] if row else None
+                fresh = _sched.source_freshness(
+                    c, _sched.load_schedule(), now_kst())
             finally:
                 c.close()
-            out["last_crawl_ok"] = last
-            if last:
-                age = repo.staleness_hours(last, now_kst())
-                # 24시간 넘게 성공 수집이 없으면 자료가 낡는다 — 침묵이 가장 위험하다
-                out["crawl_stale"] = bool(age is not None and age > 24)
-            else:
-                out["crawl_stale"] = True
+            out["last_crawl_ok"] = {f["source_key"]: f["last_success"]
+                                    for f in fresh}
+            out["crawl_stale"] = sorted(f["source_key"] for f in fresh
+                                        if f["stale"])
         except Exception:  # noqa: BLE001
             out["last_crawl_ok"] = None
             out["crawl_stale"] = None

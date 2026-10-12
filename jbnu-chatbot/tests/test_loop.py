@@ -219,7 +219,13 @@ def test_스케줄러_상태는_인증_뒤에서_보고된다(tmp_path, monkeypa
         # ★ last_crawl_ok · crawl_stale 을 허용 목록에 넣는다 (2026-10-13)
         #   수집기가 이틀 죽어 있었는데 아무도 몰랐다 — 서버는 멀쩡히 답하고
         #   자료만 낡았다. 조용히 실패하는 게 시끄럽게 실패하는 것보다 위험하다.
-        #   시각과 bool 은 감출 값이 아니다. 소스 이름·건수는 /admin 에 남긴다.
+        #   시각과 bool 은 감출 값이 아니다.
+        # ★ 하루 뒤 뒤집었다 — **소스 이름도 낸다** (2026-10-13)
+        #   어제는 "소스 이름·건수는 /admin 에" 라고 적었다. 그 결론이 틀렸다.
+        #   MAX 하나로 뭉치면 안내 페이지가 새벽에 성공한 것만으로 초록불이 되고,
+        #   생협이 두 달 죽은 걸 가린다. **원천별로 내야 지표가 일을 한다.**
+        #   원천 이름은 config/sources.yaml 에 있고 리포가 Public 이라 숨길 값이 아니다.
+        #   **건수**(items_parsed·페이지 수)는 여전히 /admin 에 남긴다 — 그건 규모다.
         assert set(public) <= {"ok", "warm", "commit", "last_crawl_ok", "crawl_stale"}
         assert public["ok"] is True
         assert client.get("/admin/status").status_code == 401
