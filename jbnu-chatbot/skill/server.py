@@ -263,8 +263,44 @@ def create_app(db_path: pathlib.Path | None = None, *,
         #     warm 을 예외로 낸 이유가 여기에도 그대로 적용된다:
         #     배포 확인할 때 못 보면 첫 학생이 대신 확인해 주게 된다.
         commit = (os.environ.get("RENDER_GIT_COMMIT") or "")[:7]
-        return {"ok": True, "warm": bool(w and w.get("ok")),
-                "commit": commit or "unknown"}
+        # ★ **마지막 성공 수집**을 낸다 (2026-10-13)
+        #   수집기가 10/12 05:34 뒤로 죽어 있었는데 **이틀 동안 아무도 몰랐다.**
+        #   서버는 멀쩡히 답하기 때문이다 — 학식도 답했다. 주간 식단표라
+        #   우연히 맞은 것이고, 다음 주 월요일이면 **틀린 걸 자신 있게** 낸다.
+        #
+        #   ★ 조용히 실패하는 게 시끄럽게 실패하는 것보다 위험하다
+        #     10/7 배포 실패는 바로 알았다 — 답이 안 나왔으니까.
+        #     수집 실패는 답이 계속 나오면서 **자료만 낡는다.**
+        #
+        #   /admin/freshness 에 이미 있던 정보다. 토큰이 필요하고,
+        #   더 중요하게는 **아무도 안 봤다.** 공개 자리로 올린다 —
+        #   commit 을 넣은 것과 같은 이유다(배포 확인할 때 못 보면
+        #   첫 학생이 대신 확인해 주게 된다).
+        #
+        #   시각과 bool 만 낸다. 소스 이름·건수는 운영 정보라 /admin 에 둔다.
+        #   health 가 DB 때문에 죽으면 안 되므로 전부 감싼다.
+        out = {"ok": True, "warm": bool(w and w.get("ok")),
+               "commit": commit or "unknown"}
+        try:
+            c = repo.connect(app.state.db_path, readonly=True)
+            try:
+                row = c.execute(
+                    "SELECT MAX(started_at) FROM crawl_run "
+                    "WHERE outcome IN ('success','unchanged')").fetchone()
+                last = row[0] if row else None
+            finally:
+                c.close()
+            out["last_crawl_ok"] = last
+            if last:
+                age = repo.staleness_hours(last, now_kst())
+                # 24시간 넘게 성공 수집이 없으면 자료가 낡는다 — 침묵이 가장 위험하다
+                out["crawl_stale"] = bool(age is not None and age > 24)
+            else:
+                out["crawl_stale"] = True
+        except Exception:  # noqa: BLE001
+            out["last_crawl_ok"] = None
+            out["crawl_stale"] = None
+        return out
 
     @app.get("/admin/status", dependencies=[Depends(auth.require_token)])
     def status() -> dict:

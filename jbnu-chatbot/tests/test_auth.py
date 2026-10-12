@@ -84,7 +84,11 @@ def test_health는_공개지만_운영정보를_안_담는다(client):
     #   아침에 '무엇이 떠 있는지부터 확인하고 잰다' 를 규칙으로 정해 놓고
     #   확인할 방법을 안 만들어 뒀다.
     #   DB 규모·경로·토큰처럼 감출 값은 여전히 여기 오면 안 된다.
-    assert set(body) <= {"ok", "warm", "commit"}
+    # ★ last_crawl_ok · crawl_stale 을 허용 목록에 넣는다 (2026-10-13)
+    #   수집기가 이틀 죽어 있었는데 아무도 몰랐다 — 서버는 멀쩡히 답하고
+    #   자료만 낡았다. 조용히 실패하는 게 시끄럽게 실패하는 것보다 위험하다.
+    #   시각과 bool 은 감출 값이 아니다. 소스 이름·건수는 /admin 에 남긴다.
+    assert set(body) <= {"ok", "warm", "commit", "last_crawl_ok", "crawl_stale"}
     assert body["ok"] is True
     assert isinstance(body["warm"], bool)
     for leak in ("meal_service", "scheduler", "sources", "last_tick",

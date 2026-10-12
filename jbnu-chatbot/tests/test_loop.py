@@ -216,7 +216,11 @@ def test_스케줄러_상태는_인증_뒤에서_보고된다(tmp_path, monkeypa
         public = client.get("/health").json()
         # ★ commit 은 공개 저장소의 공개 커밋이라 감출 값이 아니다.
         #   이 검사가 지키는 것은 DB 규모·경로·토큰 같은 **운영 정보**다.
-        assert set(public) <= {"ok", "warm", "commit"}
+        # ★ last_crawl_ok · crawl_stale 을 허용 목록에 넣는다 (2026-10-13)
+        #   수집기가 이틀 죽어 있었는데 아무도 몰랐다 — 서버는 멀쩡히 답하고
+        #   자료만 낡았다. 조용히 실패하는 게 시끄럽게 실패하는 것보다 위험하다.
+        #   시각과 bool 은 감출 값이 아니다. 소스 이름·건수는 /admin 에 남긴다.
+        assert set(public) <= {"ok", "warm", "commit", "last_crawl_ok", "crawl_stale"}
         assert public["ok"] is True
         assert client.get("/admin/status").status_code == 401
         body = client.get("/admin/status",
