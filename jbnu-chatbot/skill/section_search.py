@@ -359,6 +359,16 @@ class SearchResult:
     #   후보까지 지웠다가 '화학공학과 졸업요건' 같은 맞는 답이 죽었다 —
     #   그때는 되돌렸고, 이번엔 문장만 바꾼다.
     grazed_token: str = ""
+    # ★ 원문이 그 낱말을 **안 쓸 수도 있다** — 우리가 이은 동의어로 걸린 것이다.
+    #   '기숙사 통금' 에서 화면이 "'통금' 은 본문에만 나왔어요" 라고 했는데
+    #   본문에도 없었다. 학교는 '출입제한시간' 이라고 쓴다 (2026-10-13).
+    #   우리가 이은 말을 **원문이 쓴 말처럼** 단정한 것이라 거짓이다.
+    #   전제: 동의어 묶음(config/synonyms_manual.yaml)이 있을 때만 생긴다 —
+    #        동의어를 붙일 때마다 이 칸이 비례해서 커진다.
+    #   ★ 하나가 아니라 **보여줄 후보마다 다르다**. 1등(FAQ)은 '출입제한시간',
+    #     2등(생활관생 수칙)은 '귀관 시간' 이라고 쓴다. 1등 것만 들고
+    #     "이 안내들은 ~라고 써요" 라고 하면 그게 또 범위를 부풀린 거짓이다.
+    grazed_said: tuple[str, ...] = ()
     defer_reason: str = ""    # 왜 보류했나 — 진단용. 조용히 접으면 못 고친다
     # 답이 학생 속성에 의존한다 — 지금 관측된 것은 '학과' 하나뿐이다.
     # 학번·과정유형·학년은 있을 법하지만 관측이 없어서 안 넣는다.
@@ -952,6 +962,17 @@ def _attempt(conn, utterance: str, tokens: list[str], *, repo,
         result.defer_reason = f"'{core}' 가 제목·첫머리에 없음 (본문에서 스침)"
         # 판정을 화면이 쓸 수 있게 남긴다. 후보는 건드리지 않는다.
         result.grazed_token = core
+        # ★ "본문에만 나왔어요" 가 참인지 **확인하고** 남긴다.
+        #   보여줄 후보 **전부**가 그 낱말을 안 쓸 때만 '다른 말' 이라고 한다 —
+        #   top 하나만 보고 "이 문서들" 이라고 쓰면 또 범위를 부풀린 거짓이 된다.
+        shown = result.hits or [top]
+        if not any(core in (h.text or "") for h in shown):
+            said: list[str] = []
+            for h in shown:
+                for v in sorted(expand.get(core, ())):
+                    if v != core and v in (h.text or "") and v not in said:
+                        said.append(v)
+            result.grazed_said = tuple(said)
         return result
     if page_only:
         result.defer_reason = (f"'{' '.join(off)}' 가 제목·첫머리에 없어 "
