@@ -117,6 +117,15 @@ class SchedulerLoop:
                     from crawler import jobs as jobs_mod
                     out = jobs_mod.JOBS[job](str(run_mod.DB_PATH), cfg, now)
                     log.info("[scheduler] JOB %s done %s", job, out)
+                    # ★ 기록이 남았는지 **여기서** 확인한다 (2026-10-13)
+                    #   따라잡기는 '오늘 성공 기록이 없으면' 다시 돌린다.
+                    #   기록을 안 남기는 작업은 예정 시각 뒤 자정까지 매 틱 돈다.
+                    #   같은 일이 세 번 났다 — notices · vocab(하루 78회) ·
+                    #   그리고 이 그물이 없으면 다음에 추가되는 작업이 네 번째다.
+                    #   작업마다 _record 를 **기억해야 하는 구조**가 원인이었다.
+                    #   pages_run·council_run 은 스스로 남기므로 그물은
+                    #   안 남은 경우에만 채운다 — 겹쳐 쓰면 건수가 두 벌이 된다.
+                    self._ensure_recorded(key, now)
                     self.runs += 1
                     continue
                 run_mod.main(["--source", key])
@@ -132,6 +141,35 @@ class SchedulerLoop:
         self.last_tick = now.isoformat()
         self.last_targets = targets
         return targets
+
+    def _ensure_recorded(self, key: str, now: dt.datetime) -> bool:
+        """작업이 성공 기록을 안 남겼으면 대신 남긴다. 남겼으면 손대지 않는다.
+
+        ★ 이 그물이 지키는 것은 **따라잡기가 거짓으로 발동하지 않는 것**이다.
+          건수·세부는 작업이 남기는 쪽이 정확하므로 덮어쓰지 않는다.
+        ★ 그물이 터져도 틱을 죽이지 않는다 — 기록을 남기려다 수집을 멈추면
+          거래가 거꾸로다.
+        """
+        try:
+            conn = repo.connect(run_mod.DB_PATH)
+            try:
+                if sched.succeeded_today(conn, key, now):
+                    return False
+                run_id = f"{key}-net-{now.strftime('%Y%m%dT%H%M%S')}"
+                repo.start_crawl(conn, run_id=run_id, source_key=key,
+                                 started_at=now.isoformat())
+                repo.finish_crawl(conn, run_id, outcome="success",
+                                  finished_at=dt.datetime.now(KST).isoformat())
+                conn.commit()
+            finally:
+                conn.close()
+            log.warning("[scheduler] 기록 없음 — 그물이 남김 source=%s "
+                        "(작업이 crawl_run 을 안 남긴다)", key)
+            return True
+        except Exception:  # noqa: BLE001
+            log.error("[scheduler] 기록 그물 실패 source=%s %s", key,
+                      traceback.format_exc().strip().splitlines()[-1])
+            return False
 
     def maybe_smoke(self, now: dt.datetime) -> dict | None:
         """하루 한 번 실사이트 스모크.

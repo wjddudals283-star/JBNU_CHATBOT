@@ -78,12 +78,27 @@ def run_vocab(db_path: str, cfg: dict, now: dt.datetime) -> Any:
     ★ 코퍼스가 바뀌면 사전도 바뀌어야 한다
       새 페이지가 들어왔는데 사전이 옛 판이면, 그 페이지의 낱말로는
       붙여 쓴 질문을 못 쪼갠다. 조용한 어긋남이다.
+
+    ★ _record 로 감싼다 — 안 감싸서 **하루 78번** 돌았다 (2026-10-13)
+      위 _record 주석에 적힌 것과 **같은 일**이 여기서 또 났다.
+      기록이 없으면 succeeded_today 가 영원히 False 라, 04:30 이 지난 뒤
+      자정까지 매 틱(15분) 사전 전체(71,215 잎)를 다시 만든다.
+      전수 흉내로 쟀다: 예정 1회 → 실제 78회.
+      공지(notices)가 먼저 그랬고 이게 세 번째다 — 그래서 고치는 것만으로는
+      네 번째를 못 막는다. 자를 붙였다: tests/test_job_records.py 가
+      config/sources.yaml 의 job 전부를 돌려 기록이 남는지 본다.
+
+    ★ 그리고 멈춤과 정상이 **같은 모양**이었다
+      기록이 없으니 /health 의 crawl_stale 에 영구히 떠서 거짓 경보가 되고,
+      반대로 진짜 멈춰도 구별이 안 된다. 침묵이 가장 위험하다.
     """
-    conn = repo.connect(db_path)
-    try:
-        return vocab.build(conn, now=now)
-    finally:
-        conn.close()
+    def _build():
+        conn = repo.connect(db_path)
+        try:
+            return vocab.build(conn, now=now)
+        finally:
+            conn.close()
+    return _record(db_path, "vocab_build", now, _build)
 
 
 def run_council(db_path: str, cfg: dict, now: dt.datetime) -> Any:

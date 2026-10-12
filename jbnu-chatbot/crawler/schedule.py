@@ -140,6 +140,24 @@ def due_sources(sources: dict, now: dt.datetime, *, window_min: int = 30,
             out.append(key)
             continue
 
+        # ★ 알려진 차단은 **따라잡지 않는다** (2026-10-13)
+        #   생협은 Render 에서 영구 403 이라 성공 기록이 영영 안 생긴다.
+        #   그래서 06:00 이 지나면 자정까지 매 틱 재시도했다 —
+        #   전수 흉내로 쟀다: 예정 3회 → 실제 72회, 하루 72줄 · 두 달 4,000줄.
+        #   그 줄이 **진짜 실패를 묻었다.** 10/12 수집기가 멈췄다고 이틀 오진한
+        #   직접 원인이 이것이다. 성공할 수 없는 재시도는 값이 0이고 노이즈만 만든다.
+        #
+        #   ★ 규칙은 이미 config/sources.yaml 에 적혀 있었다 —
+        #     "실패가 정상 상태인 원천을 매일 ERROR 로 올리면 경고등이 상시
+        #      켜지고, 그러면 진짜 문제가 묻힌다." smoke 는 그걸 지키고
+        #     따라잡기만 안 지켰다. 한 군데가 규칙을 안 지킨 것이다.
+        #
+        #   ★ 예정 창(in_window)은 **그대로 둔다.** 차단이 풀리면 알아채야 한다 —
+        #     설정 주석의 "감시 방향을 뒤집어, 차단이 풀리면(200) 알린다" 가
+        #     그 경로다. 하루 3번 예정 시도 + smoke 하루 1회로 충분하다.
+        #     여기서 빼는 것은 **성공할 수 없는 반복**뿐이다.
+        if cfg.get("known_blocked"):
+            continue
         # 따라잡기: 예정 시각이 지났는데 오늘 성공이 없다
         if conn is not None and any(now >= t for t in targets):
             if not succeeded_today(conn, key, now):

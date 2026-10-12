@@ -140,7 +140,18 @@ def test_창을_놓치면_그날_안에_따라잡는다(hconn):
     # conn 을 주면 '오늘 성공 없음'을 보고 따라잡는다
     caught = sched.due_sources(srcs, at_9, conn=hconn)
     assert "jbnu_cafeteria_day" in caught, "운영시간 관측을 놓치면 안 된다"
-    assert "coop_week_menu" in caught
+
+    # ★ 'coop_week_menu 도 걸린다' 를 지웠다 (2026-10-13)
+    #   8/10 에 적을 때 생협은 따라잡기로 복구하는 원천이었다.
+    #   8/11 에 Render 403(known_blocked)이 되면서 전제가 사라졌는데
+    #   단정만 남아 있었다 — 「근거가 사라진 뒤에도 결론이 남아 있다」 다.
+    #   지금 생협 복구 경로는 따라잡기가 아니다. 대표 PC 작업 스케줄러가
+    #   `crawler.push --source coop_week_menu` 를 직접 부른다
+    #   (scripts/push_meal.ps1 · docs/PC_SCHEDULER.md) — due_sources 를 안 탄다.
+    #   그래서 여기서 빼도 백필은 안 끊긴다. 확인하고 지웠다.
+    assert "coop_week_menu" not in caught,         "성공할 수 없는 재시도는 노이즈만 만든다 (tests/test_job_records.py)"
+    # 따라잡기 자체가 **여러 원천**에 걸린다는 것은 그대로 지킨다
+    assert len([k for k in caught if srcs[k].get("job") is None]) >= 2
 
 
 def test_오늘_이미_성공했으면_따라잡지_않는다(hconn):
@@ -166,16 +177,32 @@ def test_예정_시각_전에는_따라잡지_않는다(hconn):
     assert "coop_week_menu" not in due_5
 
 
+def _catchable(srcs: dict) -> str:
+    """따라잡기가 걸릴 수 있는 원천을 **설정에서 뽑는다**.
+
+    ★ 같은 파일 아래쪽에 이미 교훈이 적혀 있다 —
+      "하드코딩하지 않는다. 원천이 늘 때마다 테스트가 깨진다(실제로 깨졌다)."
+      그런데 세 테스트가 `coop_week_menu` 를 예시로 박아 두었고,
+      생협이 known_blocked 가 되자 **셋이 같이 깨졌다** (2026-10-13).
+      규칙은 다 맞았고 **예시만 낡았다.** 그래서 예시도 설정에서 뽑는다.
+    """
+    for k, c in srcs.items():
+        if c.get("job") is None and not c.get("known_blocked")                 and (c.get("schedule") or [])[:1] <= ["09:00"]:
+            return k
+    raise AssertionError("따라잡을 수 있는 원천이 설정에 없다")
+
+
 def test_실패한_날은_따라잡는다(hconn):
     """parse_error 는 성공이 아니다. 다시 시도한다."""
     srcs = sched.load_schedule()
-    repo.start_crawl(hconn, run_id="f", source_key="coop_week_menu",
+    key = _catchable(srcs)
+    repo.start_crawl(hconn, run_id="f", source_key=key,
                      started_at="2026-08-10T06:00:00+09:00")
     repo.finish_crawl(hconn, "f", outcome="parse_error",
                       finished_at="2026-08-10T06:00:05+09:00")
     hconn.commit()
     at_9 = dt.datetime(2026, 8, 10, 9, 0, tzinfo=KST)
-    assert "coop_week_menu" in sched.due_sources(srcs, at_9, conn=hconn)
+    assert key in sched.due_sources(srcs, at_9, conn=hconn)
 
 
 def test_창을_놓쳐도_다음_호출에서_잡힌다():

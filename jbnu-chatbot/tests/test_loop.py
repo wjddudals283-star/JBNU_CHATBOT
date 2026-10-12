@@ -143,10 +143,18 @@ def test_status가_상태를_구조화해_돌려준다(isolated_db, monkeypatch)
 
 def test_한_소스가_죽어도_나머지는_돈다(isolated_db, monkeypatch, caplog):
     calls = []
+    # ★ 터뜨릴 원천을 **설정에서 뽑는다** (2026-10-13)
+    #   `coop_week_menu` 를 박아 두었다가 생협이 known_blocked 가 되면서
+    #   09:00 에 더는 due 가 아니어서 이 테스트가 깨졌다.
+    #   보는 것은 '한 원천이 죽어도 나머지를 돈다' 이고 **어느 원천인지는
+    #   아무 상관이 없다.** 상관없는 것을 박아 두면 설정이 바뀔 때 깨진다.
+    _srcs = sched.load_schedule()
+    boom = next(k for k, c in _srcs.items()
+                if c.get("job") is None and not c.get("known_blocked"))
 
     def flaky(argv):
         calls.append(argv[1])
-        if argv[1] == "coop_week_menu":
+        if argv[1] == boom:
             raise RuntimeError("원천 폭발")
         return 0
 
@@ -159,7 +167,7 @@ def test_한_소스가_죽어도_나머지는_돈다(isolated_db, monkeypatch, c
     srcs = sched.load_schedule()
     parser_targets = [k for k in got if srcs.get(k, {}).get("job") is None]
     assert len(calls) == len(parser_targets), "한 소스가 죽어도 나머지를 건너뛰면 안 된다"
-    assert "[scheduler] FAIL source=coop_week_menu" in caplog.text
+    assert f"[scheduler] FAIL source={boom}" in caplog.text
 
 
 def test_예외가_나도_루프가_죽지_않는다(isolated_db, monkeypatch):
